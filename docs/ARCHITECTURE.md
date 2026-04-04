@@ -42,7 +42,8 @@ src/
   index.ts              Entry point — MCP stdio + dashboard auto-start
   server.ts             6 tool definitions, request routing, error handling
   dashboard.ts          HTTP + WebSocket server, REST API, file watcher
-  types.ts              KnowledgeConfig interface, getConfig()
+  package-meta.ts       Cached name/version from package.json (used by getVersion / MCP / dashboard)
+  types.ts              KnowledgeConfig interface, getConfig(), getVersion()
   knowledge/
     store.ts            CRUD for markdown entries with YAML frontmatter
     search.ts           TF-IDF search over knowledge entries

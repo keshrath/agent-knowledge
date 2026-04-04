@@ -9,9 +9,10 @@ src/
   server.ts             MCP server, 6 tool definitions, request routing
   dashboard.ts          HTTP + WebSocket server, REST API, file watcher
   index.ts              Entry point (MCP stdio + dashboard auto-start)
-  types.ts              KnowledgeConfig (dataDir, sessionsDir, extraSessionRoots), getConfig(), persisted config
+  types.ts              KnowledgeConfig, getConfig(), getVersion()
+  package-meta.ts       Cached name/version from package.json
   validate.ts           ValidationError class, input validation
-  version.ts            Runtime version from package.json
+  version.ts            Re-exports getVersion from types.ts
   knowledge/
     store.ts            Markdown CRUD, frontmatter parsing, path traversal protection
     search.ts           TF-IDF search over knowledge entries with regex fallback

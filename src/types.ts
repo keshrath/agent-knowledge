@@ -1,9 +1,8 @@
 import { homedir } from 'os';
 import { join } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import type { ProviderName } from './embeddings/types.js';
+import { readPackageMeta } from './package-meta.js';
 
 export interface KnowledgeConfig {
   memoryDir: string;
@@ -125,35 +124,9 @@ export function getConfig(): KnowledgeConfig {
   };
 }
 
-let _version: string | null = null;
-
 /**
- * Read the version from package.json (cached after first call).
+ * Read the version from package.json (cached via readPackageMeta).
  */
 export function getVersion(): string {
-  if (_version) return _version;
-  try {
-    const thisFile = fileURLToPath(import.meta.url);
-    const thisDir = dirname(thisFile);
-    // Try src/../package.json then dist/../package.json
-    for (const rel of [
-      join(thisDir, '..', 'package.json'),
-      join(thisDir, '..', '..', 'package.json'),
-    ]) {
-      try {
-        const pkg = JSON.parse(readFileSync(rel, 'utf-8'));
-        if (pkg.version) {
-          _version = String(pkg.version);
-          return _version;
-        }
-      } catch (err) {
-        console.error('[knowledge] version read:', err instanceof Error ? err.message : err);
-        continue;
-      }
-    }
-  } catch (err) {
-    console.error('[knowledge] version resolve:', err instanceof Error ? err.message : err);
-  }
-  _version = '1.0.0';
-  return _version;
+  return readPackageMeta().version;
 }

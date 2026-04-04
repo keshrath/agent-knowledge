@@ -277,7 +277,7 @@ Frequently accessed entries rise in search rankings; stale entries decay over ti
 ## Testing
 
 ```bash
-npm test              # Run all 352 tests
+npm test              # 352 tests across 20 files
 npm run test:watch    # Watch mode
 npm run lint          # Type-check (tsc --noEmit)
 ```
