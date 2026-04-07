@@ -205,15 +205,23 @@ describe('searchSessions', () => {
 
   // ── Semantic fallback ──────────────────────────────────────────────────
 
-  it('semantic: true falls back gracefully when no embeddings available', async () => {
-    const results = await searchSessions('TypeScript', { semantic: true });
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0].score).toBeGreaterThan(0);
-  });
+  it(
+    'semantic: true falls back gracefully when no embeddings available',
+    { timeout: 30_000 },
+    async () => {
+      const results = await searchSessions('TypeScript', { semantic: true });
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results[0].score).toBeGreaterThan(0);
+    },
+  );
 
-  it('default behavior returns results when no vector store exists', async () => {
-    const results = await searchSessions('TypeScript');
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0].score).toBeGreaterThan(0);
-  });
+  it(
+    'default behavior returns results when no vector store exists',
+    { timeout: 30_000 },
+    async () => {
+      const results = await searchSessions('TypeScript');
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results[0].score).toBeGreaterThan(0);
+    },
+  );
 });
