@@ -127,7 +127,7 @@ CREATE TABLE edges (
 
 All four operations are exposed via the single `knowledge_graph` tool with an `action` parameter (`link`, `unlink`, `list`, `traverse`).
 
-**Auto-linking**: On `knowledge_write`, the top-3 most similar existing entries are found via cosine similarity against the vector store. Entries with similarity > 0.7 get automatic `related_to` edges created.
+**Auto-linking**: On `knowledge { action: "write" }`, the top-3 most similar existing entries are found via cosine similarity against the vector store. Entries with similarity > 0.7 get automatic `related_to` edges created.
 
 ## Confidence & Decay Scoring
 
@@ -160,7 +160,7 @@ finalScore = baseRelevance * 0.5^(daysSinceLastAccess / 90) * maturityMultiplier
 | `established` | 5-19     | 1.0x       |
 | `proven`      | 20+      | 1.5x       |
 
-Access count increments on `knowledge_read`. Maturity transitions happen automatically when thresholds are crossed. Search results from `knowledge_search` apply the decay formula to blend relevance with freshness and confidence.
+Access count increments on `knowledge { action: "read" }`. Maturity transitions happen automatically when thresholds are crossed. Search results from `knowledge_search` apply the decay formula to blend relevance with freshness and confidence.
 
 ## Memory Consolidation
 
@@ -168,7 +168,7 @@ Access count increments on `knowledge_read`. Maturity transitions happen automat
 
 Detects near-duplicate knowledge entries using TF-IDF similarity scoring.
 
-**`checkDuplicates()`** — called after `knowledge_write`. Builds a TF-IDF index from all entries, queries with the written content, and returns entries exceeding a configurable similarity threshold (default: 0.6). Warnings are included in the write response.
+**`checkDuplicates()`** — called after `knowledge { action: "write" }`. Builds a TF-IDF index from all entries, queries with the written content, and returns entries exceeding a configurable similarity threshold (default: 0.6). Warnings are included in the write response.
 
 **`consolidate()`** — batch scan for `knowledge_consolidate`. Computes pairwise TF-IDF similarities for all entries in a category (or globally), groups entries above threshold (default: 0.5) into clusters using union-find, and returns clusters with representative entries and pairwise similarity scores.
 
@@ -386,7 +386,7 @@ sequenceDiagram
     participant G as Git
     participant F as File System
 
-    C->>S: knowledge_write({ category, filename, content })
+    C->>S: knowledge({ action: "write", category, filename, content })
     S->>G: git pull --rebase
     S->>F: Write markdown file
     S->>G: git add -A && commit && push

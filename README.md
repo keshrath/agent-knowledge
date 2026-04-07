@@ -237,7 +237,7 @@ Entries can be connected via typed, weighted edges stored in a dedicated `edges`
 
 ### Auto-linking
 
-When `knowledge_write` creates or updates an entry, it automatically finds the top-3 most similar existing entries via cosine similarity and creates `related_to` edges for any pair scoring above 0.7.
+When `knowledge` with `action: "write"` creates or updates an entry, it automatically finds the top-3 most similar existing entries via cosine similarity and creates `related_to` edges for any pair scoring above 0.7.
 
 ## Confidence & Decay Scoring
 
@@ -263,7 +263,7 @@ Frequently accessed entries rise in search rankings; stale entries decay over ti
 
 **Fuzzy Matching** -- Levenshtein edit distance with sliding window. Configurable threshold (default 0.7).
 
-**Scoped Recall** via `knowledge_recall`:
+**Scoped Recall** via `knowledge_search` with the `scope` parameter:
 
 | Scope       | Matches                                   |
 | ----------- | ----------------------------------------- |

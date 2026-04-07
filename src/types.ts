@@ -91,7 +91,15 @@ export function getConfig(): KnowledgeConfig {
     }
   }
   // Auto-detect common AI coding tool session directories
-  const autoDetectRoots = [join(home, '.claude', 'projects'), join(home, '.cursor', 'projects')];
+  // Per the host-agnostic Genericity rule: support every well-known AI coding
+  // host root, not just Claude Code. New hosts: add an entry here.
+  const autoDetectRoots = [
+    join(home, '.claude', 'projects'),
+    join(home, '.cursor', 'projects'),
+    join(home, '.codex', 'projects'),
+    join(home, '.aider', 'projects'),
+    join(home, '.continue', 'projects'),
+  ];
   for (const root of autoDetectRoots) {
     if (existsSync(root) && root !== sessionsDir && !extraSessionRoots.includes(root)) {
       extraSessionRoots.push(root);

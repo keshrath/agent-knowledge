@@ -285,7 +285,7 @@ alwaysApply: false
 Before ending a session, save non-obvious learnings to agent-knowledge:
 
 1. `knowledge_search` for existing entries that overlap with this session's work.
-2. `knowledge_write` new entries for decisions, architecture changes, or error patterns
+2. `knowledge { action: "write" }` new entries for decisions, architecture changes, or error patterns
    that aren't already captured.
 3. `knowledge_link` related entries together.
 
@@ -392,9 +392,9 @@ Live reload: edit files in `src/ui/` and the browser refreshes automatically.
 
 | Operation                             | Git Action                     | When           |
 | ------------------------------------- | ------------------------------ | -------------- |
-| `knowledge_read`, `knowledge_list`    | `git pull --rebase`            | Before reading |
-| `knowledge_write`, `knowledge_delete` | `git add -A && commit && push` | After writing  |
-| `knowledge_sync`                      | `git pull` then `git push`     | Manual trigger |
+| `knowledge` action: `read`, `list`    | `git pull --rebase`            | Before reading |
+| `knowledge` action: `write`, `delete` | `git add -A && commit && push` | After writing  |
+| `knowledge` action: `sync`            | `git pull` then `git push`     | Manual trigger |
 
 Ensure git credentials are configured (SSH key or credential helper):
 
@@ -431,7 +431,7 @@ Each path is scanned for JSONL files or Cursor-style `agent-transcripts/` subdir
 
 agent-knowledge can auto-distill session transcripts into knowledge entries. Auto-distillation reads from all discovered session sources and works with any tool whose sessions are available through the adapter system.
 
-To manually save knowledge from any client, use `knowledge_write`.
+To manually save knowledge from any client, use `knowledge` with `action: "write"`.
 
 ---
 

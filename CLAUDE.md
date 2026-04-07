@@ -111,7 +111,7 @@ Additional roots: `EXTRA_SESSION_ROOTS` env var (comma-separated). New tools: im
 - Session search scopes: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`
 - Knowledge graph: typed edges between entries (8 relationship types), BFS traversal via `knowledge_graph`
 - Confidence/decay scoring: search ranking weighted by access frequency and recency (candidate->established->proven)
-- Auto-linking: `knowledge_write` auto-creates `related_to` edges for top-3 similar entries (cosine > 0.7)
+- Auto-linking: `knowledge` with `action: "write"` auto-creates `related_to` edges for top-3 similar entries (cosine > 0.7)
 
 ## Commit Messages
 

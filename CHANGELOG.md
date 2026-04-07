@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.17 (2026-04-07)
+
+### Changed
+
+- **Doc rewrites for post-consolidation tool surface.** Updated `README.md`, `CLAUDE.md`, `docs/ARCHITECTURE.md`, and `docs/SETUP.md` to use the current action-based tool form (`knowledge { action: "write" }`) instead of references to the obsolete per-action tool names (`knowledge_write`, `knowledge_read`, `knowledge_list`, `knowledge_delete`, `knowledge_sync`, `knowledge_recall`). The README's tool table at the top was already correct; this fixes the deeper docs.
+
+### Added
+
+- **Host auto-detect expanded.** `src/types.ts` now auto-detects projects directories from all five well-known AI coding host roots: `.claude`, `.cursor`, `.codex`, `.aider`, `.continue` (was just `.claude` and `.cursor`). Aligned with the host-agnostic Genericity rule.
+
+### Fixed
+
+- All three version files (`package.json`, `server.json`, `agent-desk-plugin.json`) re-aligned to **1.3.17**. They had silently drifted: package was at 1.3.16, server was at 1.3.15 (with the inner package version even older at 1.3.14), and agent-desk-plugin was at 1.3.15.
+
 ## 1.3.1 (2026-03-30)
 
 ### Changed
