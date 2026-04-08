@@ -23,6 +23,19 @@ export interface SessionMessage {
 
 const DEFAULT_MAX_CHARS = 2000;
 const DEFAULT_OVERLAP = 200;
+/** Default minimum chunk size — drop chunks shorter than this when filtering. */
+export const DEFAULT_MIN_CHUNK_SIZE = 30;
+
+export interface ChunkSessionOptions {
+  maxChars?: number;
+  /**
+   * Drop chunks whose text length (after the role prefix) is below this many chars.
+   * Default 0 (no filtering) for backwards compatibility with the legacy
+   * positional-arg call form. Pass 30 (DEFAULT_MIN_CHUNK_SIZE) to filter out
+   * low-signal acks and noise.
+   */
+  minChunkSize?: number;
+}
 
 /**
  * Strip YAML frontmatter delimited by `---\n...\n---` from the start of text.
@@ -166,14 +179,20 @@ export function chunkKnowledge(text: string, maxChars: number = DEFAULT_MAX_CHAR
  */
 export function chunkSession(
   messages: SessionMessage[],
-  maxChars: number = DEFAULT_MAX_CHARS,
+  optsOrMaxChars: number | ChunkSessionOptions = DEFAULT_MAX_CHARS,
 ): Chunk[] {
+  const opts: ChunkSessionOptions =
+    typeof optsOrMaxChars === 'number' ? { maxChars: optsOrMaxChars } : optsOrMaxChars;
+  const maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
+  const minChunkSize = opts.minChunkSize ?? 0;
+
   const chunks: Chunk[] = [];
   let chunkIndex = 0;
 
   for (const msg of messages) {
     const text = normalizeWhitespace(msg.text);
     if (text.length === 0) continue;
+    if (minChunkSize > 0 && text.length < minChunkSize) continue;
 
     const prefix = `[${msg.role}]: `;
     const metadata: Record<string, unknown> = { role: msg.role };

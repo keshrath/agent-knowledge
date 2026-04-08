@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { KnowledgeGraph, RELATIONSHIP_TYPES } from '../src/knowledge/graph.js';
+import { KnowledgeGraph, RELATIONSHIP_TYPES, isEdgeValidAt } from '../src/knowledge/graph.js';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-graph-test-'));
@@ -189,6 +189,72 @@ describe('KnowledgeGraph', () => {
   describe('RELATIONSHIP_TYPES', () => {
     it('contains all expected types', () => {
       expect(RELATIONSHIP_TYPES.length).toBe(8);
+    });
+  });
+
+  describe('temporal validity', () => {
+    it('stores valid_from / valid_to on link', () => {
+      const edge = graph.link('a.md', 'b.md', 'related_to', 0.5, '2025-01-01', '2025-12-31');
+      expect(edge.valid_from).toBe('2025-01-01');
+      expect(edge.valid_to).toBe('2025-12-31');
+    });
+
+    it('defaults valid_from / valid_to to null when omitted', () => {
+      const edge = graph.link('a.md', 'b.md', 'related_to');
+      expect(edge.valid_from).toBeNull();
+      expect(edge.valid_to).toBeNull();
+    });
+
+    it('isEdgeValidAt: open-ended edge is valid at any date with explicit asOf', () => {
+      const edge = graph.link('a.md', 'b.md', 'related_to');
+      expect(isEdgeValidAt(edge, '2026-04-08')).toBe(true);
+    });
+
+    it('isEdgeValidAt: filters by valid_from window', () => {
+      const edge = graph.link('a.md', 'b.md', 'related_to', 0.5, '2025-06-01', null);
+      expect(isEdgeValidAt(edge, '2025-05-01')).toBe(false);
+      expect(isEdgeValidAt(edge, '2025-07-01')).toBe(true);
+    });
+
+    it('isEdgeValidAt: filters by valid_to window', () => {
+      const edge = graph.link('a.md', 'b.md', 'related_to', 0.5, null, '2025-06-30');
+      expect(isEdgeValidAt(edge, '2025-05-01')).toBe(true);
+      expect(isEdgeValidAt(edge, '2025-07-01')).toBe(false);
+    });
+
+    it('links() filters by as_of', () => {
+      graph.link('a.md', 'b.md', 'related_to', 0.5, '2025-01-01', '2025-06-30');
+      graph.link('a.md', 'c.md', 'related_to', 0.5, '2025-07-01', null);
+      const inJune = graph.links('a.md', undefined, '2025-06-15');
+      expect(inJune.length).toBe(1);
+      expect(inJune[0].target).toBe('b.md');
+      const inAug = graph.links('a.md', undefined, '2025-08-15');
+      expect(inAug.length).toBe(1);
+      expect(inAug[0].target).toBe('c.md');
+    });
+
+    it('graph() respects as_of when traversing', () => {
+      graph.link('a.md', 'b.md', 'related_to', 0.5, '2025-01-01', '2025-06-30');
+      graph.link('b.md', 'c.md', 'depends_on', 0.5, '2025-07-01', null);
+      const inJune = graph.graph('a.md', 5, '2025-06-15');
+      expect(inJune.nodes.map((n) => n.path).sort()).toEqual(['a.md', 'b.md']);
+      const inAug = graph.graph('a.md', 5, '2025-08-15');
+      expect(inAug.nodes.length).toBe(1); // a.md cannot reach b.md (first edge expired)
+    });
+
+    it('invalidate() sets valid_to on a specific edge', () => {
+      graph.link('a.md', 'b.md', 'related_to');
+      const updated = graph.invalidate('a.md', 'b.md', 'related_to', '2026-01-01');
+      expect(updated).toBe(1);
+      const edges = graph.links('a.md');
+      expect(edges[0].valid_to).toBe('2026-01-01');
+    });
+
+    it('invalidate() with no rel_type marks all edges between pair', () => {
+      graph.link('a.md', 'b.md', 'related_to');
+      graph.link('a.md', 'b.md', 'depends_on');
+      const updated = graph.invalidate('a.md', 'b.md', undefined, '2026-01-01');
+      expect(updated).toBe(2);
     });
   });
 });

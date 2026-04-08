@@ -24,17 +24,22 @@ export function createServer(options?: ServerOptions): Server {
       {
         name: 'knowledge',
         description:
-          'Knowledge base CRUD and sync. Actions: ' +
+          'Knowledge base CRUD, sync, and session-start hydration. Actions: ' +
           '"list" (browse entries), "read" (get entry content), ' +
           '"write" (create/update entry, auto git sync), ' +
-          '"delete" (remove entry, auto git sync), "sync" (manual git pull + push).',
+          '"delete" (remove entry, auto git sync), "sync" (manual git pull + push), ' +
+          '"wakeup" (return token-budgeted L0 identity + L1 top-weight entries — call once at session start).',
         inputSchema: {
           type: 'object' as const,
           properties: {
             action: {
               type: 'string',
-              enum: ['list', 'read', 'write', 'delete', 'sync'],
+              enum: ['list', 'read', 'write', 'delete', 'sync', 'wakeup'],
               description: 'Action to perform',
+            },
+            token_budget: {
+              type: 'number',
+              description: '[wakeup] Max tokens to render (chars/4 estimate, default 800)',
             },
             category: {
               type: 'string',
@@ -109,6 +114,18 @@ export function createServer(options?: ServerOptions): Server {
               type: 'boolean',
               description:
                 'Blend semantic vector similarity with TF-IDF (default: true). Falls back to pure TF-IDF if embeddings unavailable.',
+            },
+            category: {
+              type: 'string',
+              enum: [...CATEGORIES],
+              description:
+                'Knowledge category to focus on (optional). Combine with category_mode to control whether non-matching entries are dropped or just down-ranked.',
+            },
+            category_mode: {
+              type: 'string',
+              enum: ['filter', 'boost'],
+              description:
+                'How `category` is applied to knowledge results: "filter" (default) hides non-matching entries; "boost" keeps them but gives matching entries a 25% score boost. Use "boost" when you might be wrong about the category.',
             },
           },
           required: ['query'],
@@ -200,25 +217,28 @@ export function createServer(options?: ServerOptions): Server {
       {
         name: 'knowledge_graph',
         description:
-          'Knowledge graph operations: create/remove edges, list edges, or traverse via BFS. ' +
+          'Knowledge graph operations with temporal validity: create/remove edges, ' +
+          'mark facts as no longer valid, list edges (optionally as-of a date), traverse via BFS. ' +
+          'Edges support valid_from/valid_to validity windows. ' +
           'Relationship types: related_to, supersedes, depends_on, contradicts, specializes, part_of, alternative_to, builds_on.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             action: {
               type: 'string',
-              enum: ['link', 'unlink', 'list', 'traverse'],
+              enum: ['link', 'unlink', 'invalidate', 'list', 'traverse'],
               description:
-                'Action: link (create edge), unlink (remove edge), list (list edges), traverse (BFS)',
+                'Action: link (create edge), unlink (remove edge), invalidate (set valid_to), list (list edges), traverse (BFS)',
             },
             source: {
               type: 'string',
-              description: "Source entry path (action=link/unlink), e.g. 'projects/my-project.md'",
+              description:
+                "Source entry path (action=link/unlink/invalidate), e.g. 'projects/my-project.md'",
             },
             target: {
               type: 'string',
               description:
-                "Target entry path (action=link/unlink), e.g. 'decisions/architecture.md'",
+                "Target entry path (action=link/unlink/invalidate), e.g. 'decisions/architecture.md'",
             },
             entry: {
               type: 'string',
@@ -227,7 +247,8 @@ export function createServer(options?: ServerOptions): Server {
             rel_type: {
               type: 'string',
               enum: [...RELATIONSHIP_TYPES],
-              description: 'Relationship type (required for link, optional filter for unlink/list)',
+              description:
+                'Relationship type (required for link, optional filter for unlink/invalidate/list)',
             },
             strength: {
               type: 'number',
@@ -236,6 +257,21 @@ export function createServer(options?: ServerOptions): Server {
             depth: {
               type: 'number',
               description: 'Max traversal depth in hops (action=traverse, default: 2)',
+            },
+            valid_from: {
+              type: 'string',
+              description:
+                'ISO date the fact became true (action=link, optional). Null/omitted = unbounded.',
+            },
+            valid_to: {
+              type: 'string',
+              description:
+                'ISO date the fact stopped being true (action=link/invalidate). For invalidate, defaults to today.',
+            },
+            as_of: {
+              type: 'string',
+              description:
+                'ISO date — only return edges valid at this date (action=list/traverse, optional)',
             },
           },
           required: ['action'],

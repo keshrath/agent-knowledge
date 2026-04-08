@@ -16,6 +16,7 @@ import { indexKnowledgeEntry } from './sessions/indexer.js';
 import { searchSessions } from './sessions/search.js';
 import { searchKnowledge, invalidateKnowledgeIndexCache } from './knowledge/search.js';
 import { listSessions, getSessionSummary } from './sessions/summary.js';
+import { wakeup } from './wakeup.js';
 import { scopedSearch, type SearchScope } from './sessions/scopes.js';
 import { VectorStore } from './vectorstore/index.js';
 import {
@@ -214,8 +215,17 @@ export async function handleKnowledge(args: Record<string, unknown>): Promise<To
       const result = await gitSync(config.memoryDir);
       return ok(result);
     }
+    case 'wakeup': {
+      const tokenBudget = optionalNumber(a, 'token_budget', 50, 8000);
+      // Reuses the existing `category` param — same enum, same meaning.
+      const scope = validateEnum(optionalString(a, 'category'), CATEGORIES, 'category');
+      const result = wakeup({ tokenBudget, scope });
+      return ok(result);
+    }
     default:
-      return err(`Unknown action: ${action}. Valid actions: list, read, write, delete, sync`);
+      return err(
+        `Unknown action: ${action}. Valid actions: list, read, write, delete, sync, wakeup`,
+      );
   }
 }
 
@@ -315,17 +325,25 @@ export async function handleKnowledgeSearch(args: Record<string, unknown>): Prom
   });
 
   const config = getConfig();
-  const knowledgeResults = searchKnowledge(config.memoryDir, query, { maxResults: 10 }).map(
-    (r) => ({
-      source: 'knowledge' as const,
-      id: r.entry.path,
-      path: r.entry.path,
-      category: r.entry.category,
-      title: r.entry.title || r.entry.path,
-      excerpt: r.excerpt,
-      score: r.score,
-    }),
+  const category = optionalString(a, 'category');
+  const categoryMode = validateEnum(
+    optionalString(a, 'category_mode'),
+    ['filter', 'boost'] as const,
+    'category_mode',
   );
+  const knowledgeResults = searchKnowledge(config.memoryDir, query, {
+    maxResults: 10,
+    category,
+    categoryMode,
+  }).map((r) => ({
+    source: 'knowledge' as const,
+    id: r.entry.path,
+    path: r.entry.path,
+    category: r.entry.category,
+    title: r.entry.title || r.entry.path,
+    excerpt: r.excerpt,
+    score: r.score,
+  }));
 
   return ok({ sessions: sessionResults, knowledge: knowledgeResults });
 }
@@ -481,8 +499,17 @@ export function handleKnowledgeGraphConsolidated(args: Record<string, unknown>):
       const relType = requireString(a, 'rel_type');
       validateEnum(relType, RELATIONSHIP_TYPES, 'rel_type');
       const strength = optionalNumber(a, 'strength', 0, 1) ?? 0.5;
+      const validFrom = optionalString(a, 'valid_from') ?? null;
+      const validTo = optionalString(a, 'valid_to') ?? null;
       const graphStore = getKnowledgeGraph();
-      const edge = graphStore.link(source, target, relType as RelationshipType, strength);
+      const edge = graphStore.link(
+        source,
+        target,
+        relType as RelationshipType,
+        strength,
+        validFrom,
+        validTo,
+      );
       return ok(edge);
     }
     case 'unlink': {
@@ -497,6 +524,19 @@ export function handleKnowledgeGraphConsolidated(args: Record<string, unknown>):
       const removed = graphStore.unlink(source, target, relType);
       return ok({ removed });
     }
+    case 'invalidate': {
+      const source = requireString(a, 'source');
+      const target = requireString(a, 'target');
+      const relType = validateEnum(
+        optionalString(a, 'rel_type'),
+        RELATIONSHIP_TYPES,
+        'rel_type',
+      ) as RelationshipType | undefined;
+      const validTo = optionalString(a, 'valid_to') ?? new Date().toISOString().slice(0, 10);
+      const graphStore = getKnowledgeGraph();
+      const updated = graphStore.invalidate(source, target, relType, validTo);
+      return ok({ updated, valid_to: validTo });
+    }
     case 'list': {
       const entry = optionalString(a, 'entry');
       const relType = validateEnum(
@@ -504,19 +544,23 @@ export function handleKnowledgeGraphConsolidated(args: Record<string, unknown>):
         RELATIONSHIP_TYPES,
         'rel_type',
       ) as RelationshipType | undefined;
+      const asOf = optionalString(a, 'as_of');
       const graphStore = getKnowledgeGraph();
-      const edges = graphStore.links(entry, relType);
+      const edges = graphStore.links(entry, relType, asOf);
       return ok(edges);
     }
     case 'traverse': {
       const entry = requireString(a, 'entry');
       const depth = optionalNumber(a, 'depth', 1, 10) ?? 2;
+      const asOf = optionalString(a, 'as_of');
       const graphStore = getKnowledgeGraph();
-      const graphResult = graphStore.graph(entry, depth);
+      const graphResult = graphStore.graph(entry, depth, asOf);
       return ok(graphResult);
     }
     default:
-      return err(`Unknown action: ${action}. Valid actions: link, unlink, list, traverse`);
+      return err(
+        `Unknown action: ${action}. Valid actions: link, unlink, invalidate, list, traverse`,
+      );
   }
 }
 
@@ -548,7 +592,7 @@ export async function handleKnowledgeAnalyze(args: Record<string, unknown>): Pro
 // ── Dispatch map ─────────────────────────────────────────────────────────────
 
 export const toolHandlers: Record<string, ToolHandler> = {
-  // Consolidated tools (6 total)
+  // Consolidated tools (6 total) — wakeup folded into `knowledge` as an action
   knowledge: handleKnowledge,
   knowledge_search: handleKnowledgeSearch,
   knowledge_graph: handleKnowledgeGraphConsolidated,

@@ -34,6 +34,18 @@ export interface Edge {
   rel_type: RelationshipType;
   strength: number;
   created_at: string;
+  /** ISO date (YYYY-MM-DD or full ISO timestamp) when this fact became true. Null = always valid. */
+  valid_from: string | null;
+  /** ISO date when this fact stopped being true. Null = still valid. */
+  valid_to: string | null;
+}
+
+/** Returns true if the edge is valid at the given ISO date (or now). */
+export function isEdgeValidAt(edge: Edge, asOf?: string): boolean {
+  if (!asOf) return edge.valid_to === null;
+  if (edge.valid_from && edge.valid_from > asOf) return false;
+  if (edge.valid_to && edge.valid_to < asOf) return false;
+  return true;
 }
 
 export interface GraphNode {
@@ -79,11 +91,22 @@ export class KnowledgeGraph {
           rel_type TEXT NOT NULL,
           strength REAL DEFAULT 0.5,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          valid_from TEXT,
+          valid_to TEXT,
           PRIMARY KEY (source, target, rel_type)
         );
         CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source);
         CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target);
       `);
+
+      // Backwards-compat migration: existing DBs may not have valid_from/valid_to
+      for (const col of ['valid_from', 'valid_to']) {
+        try {
+          this.db.exec(`ALTER TABLE edges ADD COLUMN ${col} TEXT`);
+        } catch {
+          // column already exists
+        }
+      }
 
       this.initialized = true;
     } catch (err) {
@@ -94,8 +117,18 @@ export class KnowledgeGraph {
 
   /**
    * Create or update an edge between two entries.
+   *
+   * Optional `validFrom`/`validTo` mark this fact's temporal validity window.
+   * Both are ISO date strings (YYYY-MM-DD or full ISO timestamp); null = unbounded.
    */
-  link(source: string, target: string, relType: RelationshipType, strength: number = 0.5): Edge {
+  link(
+    source: string,
+    target: string,
+    relType: RelationshipType,
+    strength: number = 0.5,
+    validFrom: string | null = null,
+    validTo: string | null = null,
+  ): Edge {
     this.init();
     if (!this.db) throw new Error('Graph database not available');
 
@@ -113,18 +146,46 @@ export class KnowledgeGraph {
 
     this.db
       .prepare(
-        `INSERT INTO edges (source, target, rel_type, strength)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO edges (source, target, rel_type, strength, valid_from, valid_to)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(source, target, rel_type)
-         DO UPDATE SET strength = excluded.strength`,
+         DO UPDATE SET strength = excluded.strength,
+                       valid_from = excluded.valid_from,
+                       valid_to = excluded.valid_to`,
       )
-      .run(source, target, relType, strength);
+      .run(source, target, relType, strength, validFrom, validTo);
 
     const row = this.db
       .prepare('SELECT * FROM edges WHERE source = ? AND target = ? AND rel_type = ?')
       .get(source, target, relType) as Edge;
 
     return row;
+  }
+
+  /**
+   * Mark an existing edge as no longer valid by setting `valid_to`.
+   * If relType is omitted, invalidates all matching edges between source and target.
+   * Returns number of edges updated.
+   */
+  invalidate(
+    source: string,
+    target: string,
+    relType: RelationshipType | undefined,
+    validTo: string,
+  ): number {
+    this.init();
+    if (!this.db) throw new Error('Graph database not available');
+
+    if (relType) {
+      const result = this.db
+        .prepare('UPDATE edges SET valid_to = ? WHERE source = ? AND target = ? AND rel_type = ?')
+        .run(validTo, source, target, relType);
+      return result.changes;
+    }
+    const result = this.db
+      .prepare('UPDATE edges SET valid_to = ? WHERE source = ? AND target = ?')
+      .run(validTo, source, target);
+    return result.changes;
   }
 
   /**
@@ -150,45 +211,49 @@ export class KnowledgeGraph {
 
   /**
    * List edges, optionally filtered by entry path and/or relationship type.
+   * If `asOf` is set, only edges valid at that date are returned.
    */
-  links(entry?: string, relType?: RelationshipType): Edge[] {
+  links(entry?: string, relType?: RelationshipType, asOf?: string): Edge[] {
     this.init();
     if (!this.db) return [];
 
+    let rows: Edge[];
     if (entry && relType) {
-      return this.db
+      rows = this.db
         .prepare(
           `SELECT * FROM edges
            WHERE (source = ? OR target = ?) AND rel_type = ?
            ORDER BY created_at DESC`,
         )
         .all(entry, entry, relType) as Edge[];
-    }
-
-    if (entry) {
-      return this.db
+    } else if (entry) {
+      rows = this.db
         .prepare(
           `SELECT * FROM edges
            WHERE source = ? OR target = ?
            ORDER BY created_at DESC`,
         )
         .all(entry, entry) as Edge[];
-    }
-
-    if (relType) {
-      return this.db
+    } else if (relType) {
+      rows = this.db
         .prepare('SELECT * FROM edges WHERE rel_type = ? ORDER BY created_at DESC')
         .all(relType) as Edge[];
+    } else {
+      rows = this.db.prepare('SELECT * FROM edges ORDER BY created_at DESC').all() as Edge[];
     }
 
-    return this.db.prepare('SELECT * FROM edges ORDER BY created_at DESC').all() as Edge[];
+    if (asOf !== undefined) {
+      return rows.filter((e) => isEdgeValidAt(e, asOf));
+    }
+    return rows;
   }
 
   /**
    * BFS traversal from a starting entry, returning all nodes and edges
-   * within `depth` hops.
+   * within `depth` hops. If `asOf` is set, only edges valid at that date
+   * are followed.
    */
-  graph(entry: string, depth: number = 2): GraphResult {
+  graph(entry: string, depth: number = 2, asOf?: string): GraphResult {
     this.init();
     if (!this.db) return { nodes: [], edges: [] };
 
@@ -202,9 +267,11 @@ export class KnowledgeGraph {
       const item = queue.shift()!;
       if (item.currentDepth >= depth) continue;
 
-      const edges = this.db
+      const allEdges = this.db
         .prepare('SELECT * FROM edges WHERE source = ? OR target = ?')
         .all(item.path, item.path) as Edge[];
+
+      const edges = asOf !== undefined ? allEdges.filter((e) => isEdgeValidAt(e, asOf)) : allEdges;
 
       for (const edge of edges) {
         const isDuplicate = resultEdges.some(

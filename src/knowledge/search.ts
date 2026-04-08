@@ -7,7 +7,20 @@ export interface SearchOptions {
   category?: string;
   maxResults?: number;
   caseSensitive?: boolean;
+  /**
+   * How to use `category`:
+   *  - 'filter' (default, current behavior): only entries in `category` are indexed.
+   *  - 'boost': all entries are indexed; matching-category entries get a score multiplier.
+   *
+   * Hard filters silently discard the right evidence when the metadata
+   * doesn't match the answer's location. The boost path keeps the candidate
+   * in the pool while still favoring the matching category.
+   */
+  categoryMode?: 'filter' | 'boost';
 }
+
+/** Score multiplier applied to entries whose category matches in 'boost' mode. */
+export const CATEGORY_BOOST_MULTIPLIER = 1.25;
 
 export interface SearchResult {
   entry: KnowledgeEntry;
@@ -81,9 +94,12 @@ export function searchKnowledge(
   query: string,
   options: SearchOptions = {},
 ): Array<SearchResult> {
-  const { category, maxResults = 10, caseSensitive = false } = options;
+  const { category, maxResults = 10, caseSensitive = false, categoryMode = 'filter' } = options;
 
-  const { index, documents } = getOrBuildKnowledgeIndex(dir, category);
+  // In 'boost' mode, build the index over the full corpus (no category restriction).
+  // In 'filter' mode (default), keep current behavior of restricting the index to one category.
+  const indexCategory = categoryMode === 'boost' ? undefined : category;
+  const { index, documents } = getOrBuildKnowledgeIndex(dir, indexCategory);
 
   if (documents.length === 0) return [];
 
@@ -108,7 +124,13 @@ export function searchKnowledge(
         | 'established'
         | 'proven';
       const lastAccessed = scoreInfo?.last_accessed ?? null;
-      const finalScore = computeFinalScore(result.score, lastAccessed, maturity);
+      let finalScore = computeFinalScore(result.score, lastAccessed, maturity);
+
+      // Category boost: in 'boost' mode, give matching-category entries an
+      // edge instead of dropping non-matching entries.
+      if (categoryMode === 'boost' && category && doc.entry.category === category) {
+        finalScore *= CATEGORY_BOOST_MULTIPLIER;
+      }
 
       results.push({
         entry: doc.entry,

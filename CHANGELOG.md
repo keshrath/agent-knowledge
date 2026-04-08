@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.4.0 (2026-04-08)
+
+Seven additions focused on retrieval quality, temporal reasoning, and measurable evaluation.
+
+### Added
+
+- **`knowledge` action `wakeup`.** Returns a token-budgeted "L0 + L1" context blob — identity from `~/agent-knowledge/identity.md` plus the highest-weighted entries — for session-start hydration. Default budget 800 tokens. Weight = `recency × log(size+1)`. Optional `category` param narrows L1 to one category. Folded into the existing `knowledge` tool as a 6th action so the MCP surface stays at six tools.
+- **Temporal validity on `knowledge_graph` edges.** New columns `valid_from` / `valid_to` (nullable, ALTER-TABLE migration is backwards compatible). New `invalidate` action sets `valid_to` without deleting the edge so history is preserved. New `as_of` parameter on `list` and `traverse` returns point-in-time snapshots — `links('projects/auth.md', undefined, '2026-02-15')` returns the assignees who were valid in February. New `isEdgeValidAt` helper.
+- **Hybrid scoring boosts (`src/search/boosts.ts`).** Two boosts wired into `hybridSearch`: a proper-noun boost (capitalized non-stopword tokens in the query, max 40% score uplift) and a Gaussian temporal-proximity boost when the query mentions a date or relative time (`yesterday`, `last week`, `march 2025`, `2024`). Combined cap at +66.7%. `hasAnyBoostSignal` short-circuits when no signal is present so default behavior is unchanged.
+- **`category_mode` on `knowledge_search`.** New option `'filter' | 'boost'` (default `'filter'` — backwards compatible). In `'boost'` mode, `category` becomes a 1.25× score multiplier instead of a hard WHERE filter. Use `'boost'` when you might be wrong about the category — hard filters silently discard the right answer when the metadata doesn't match.
+- **`indexVerbatim` config flag.** Toggle verbatim per-message session indexing via `KNOWLEDGE_INDEX_VERBATIM` env var or persisted config. Default `true`. Indexer now drops messages shorter than 30 chars (low-signal acks).
+- **PreCompact / Stop hook.** New `scripts/hooks/precompact-flush.mjs` — reads hook JSON from stdin, dynamic-imports `dist/sessions/summary.js`, writes a flushed session summary to `~/agent-knowledge/sessions/<project>/<event>-<stamp>-<sid>.md` so distillation has an anchor when the host compacts the conversation. Fail-open. Wire-up snippet for Claude Code `settings.json` is in the file header. Not auto-installed.
+- **Benchmark suite (`bench/`).** Two runners: a small smoke benchmark over `~/agent-knowledge/` (22 hand-authored fixtures) and a full LongMemEval runner (`bench/longmemeval.ts`) against the public Wu et al. 2024 dataset. The LongMemEval runner supports `--raw`, `--boosts`, `--semantic`, and `--hybrid` modes and prints per-question-type breakdowns. `npm run bench` (uses `tsx`).
+
+### Tests
+
+- New e2e suite `tests/e2e/v14-features.e2e.test.ts` (10 tests): wakeup default identity, wakeup with `identity.md`, token-budget truncation, scope filter, `categoryMode` filter vs boost behavior, full KG temporal lifecycle (link → list as_of → invalidate → list as_of), `graph()` traversal with `as_of`, weight-based L1 ordering.
+- New unit suite `tests/boosts.test.ts` (14 tests): proper-noun extraction (stopword filtering, dedup), boost ramp, temporal reference parsing, Gaussian decay, combined-boost cap.
+- Extended `tests/graph.test.ts` with 9 temporal cases.
+- **Total: 390 tests passing**, up from 352.
+
+### Internal
+
+- `chunkSession` accepts an options object alongside the legacy `maxChars` number for backwards compatibility.
+- Version bumped across `package.json`, `server.json`, `agent-desk-plugin.json`.
+
 ## 1.3.27 (2026-04-08)
 
 ### Added

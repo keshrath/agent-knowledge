@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
-[![Tests: 352 passing](https://img.shields.io/badge/Tests-352%20passing-brightgreen.svg)]()
+[![Tests: 390 passing](https://img.shields.io/badge/Tests-390%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
 
 **Cross-session memory and recall for AI coding assistants** -- works with Claude Code, Cursor, OpenCode, Cline, Continue.dev, and Aider out of the box. Git-synced knowledge base, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing.
@@ -53,6 +53,11 @@ No configuration needed. Additional session roots can be added via the `EXTRA_SE
 - **Fuzzy matching** -- typo-tolerant search using Levenshtein distance
 - **6 search scopes** -- errors, plans, configs, tools, files, decisions
 - **6 MCP tools** -- consolidated action-based interface (knowledge, knowledge_search, knowledge_session, knowledge_graph, knowledge_analyze, knowledge_admin)
+- **Wakeup context (L0+L1)** -- `knowledge` action `wakeup` returns a token-budgeted identity + top-weight entries blob for session-start hydration
+- **Temporal knowledge graph** -- edges support `valid_from` / `valid_to` validity windows; `as_of` queries return point-in-time snapshots; `invalidate` action marks facts as ended without deleting them
+- **Hybrid scoring boosts** -- proper-noun and temporal-proximity boosts on top of TF-IDF + semantic blend, capped at +66.7%, short-circuit when no signals are present
+- **Category as boost (not filter)** -- opt into `category_mode: "boost"` so a wrong category guess down-ranks instead of discarding the right answer
+- **Verbatim session indexing** -- per-message chunks (≥30 chars) embedded into the vector store so raw conversation is retrievable; toggle with `KNOWLEDGE_INDEX_VERBATIM=false`
 - **Configurable git URL** -- `knowledge_admin(action: "config")` for runtime setup, persisted at XDG/AppData location
 - **Cross-machine persistence** -- knowledge syncs via git, sessions read from local storage of each tool
 - **Real-time dashboard** -- browse, search, and manage at `localhost:3423`

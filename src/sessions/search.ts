@@ -1,5 +1,6 @@
 import { TfIdfIndex, recencyDecay } from '../search/tfidf.js';
 import { buildExcerpt } from '../search/excerpt.js';
+import { buildBoostContext, applyBoosts, hasAnyBoostSignal } from '../search/boosts.js';
 import {
   getProjectDirs,
   getSessionFiles,
@@ -134,6 +135,11 @@ async function hybridSearch(
   const maxTfidf = tfidfResults.length > 0 ? Math.max(...tfidfResults.map((r) => r.score)) : 1;
   const normFactor = maxTfidf > 0 ? maxTfidf : 1;
 
+  // Build boost context once per query (proper-noun + temporal-proximity boosts).
+  // hasAnyBoostSignal short-circuits when neither signal is present.
+  const boostCtx = buildBoostContext(query);
+  const boostsActive = hasAnyBoostSignal(boostCtx);
+
   // Merge: start with TF-IDF results, blend in semantic scores
   const merged = new Map<string, SearchResult>();
 
@@ -146,7 +152,10 @@ async function hybridSearch(
     // Apply recency decay on top of blended score
     const ts = result.timestamp ?? (result.metadata?.sessionDate as string | undefined);
     const decay = ts ? recencyDecay(ts) : 1;
-    const finalScore = blended * decay;
+    const decayed = blended * decay;
+    const finalScore = boostsActive
+      ? applyBoosts(decayed, boostCtx, { docText: result.excerpt, docTimestamp: ts ?? null })
+      : decayed;
 
     merged.set(key, {
       ...result,

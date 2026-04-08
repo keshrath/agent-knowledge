@@ -193,20 +193,21 @@ agent-knowledge exposes 6 MCP tools, each with multiple actions.
 
 ### knowledge
 
-Knowledge base CRUD and git sync.
+Knowledge base CRUD, git sync, and session-start hydration.
 
-**Actions:** `list`, `read`, `write`, `delete`, `sync`
+**Actions:** `list`, `read`, `write`, `delete`, `sync`, `wakeup`
 
 **Parameters:**
 
-| Name       | Type   | Required | Description                                                                                                          |
-| ---------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| `action`   | string | Yes      | One of: `list`, `read`, `write`, `delete`, `sync`                                                                    |
-| `category` | string | No       | [list] Filter by category; [write] Target directory. One of: `projects`, `people`, `decisions`, `workflows`, `notes` |
-| `tag`      | string | No       | [list] Filter by tag                                                                                                 |
-| `path`     | string | No       | [read/delete] Relative path, e.g. `projects/my-project.md`                                                           |
-| `filename` | string | No       | [write] Filename with or without .md extension                                                                       |
-| `content`  | string | No       | [write] Full Markdown content (max 1MB)                                                                              |
+| Name           | Type   | Required | Description                                                                                                                 |
+| -------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `action`       | string | Yes      | One of: `list`, `read`, `write`, `delete`, `sync`, `wakeup`                                                                 |
+| `category`     | string | No       | [list/wakeup] Filter by category; [write] Target directory. One of: `projects`, `people`, `decisions`, `workflows`, `notes` |
+| `tag`          | string | No       | [list] Filter by tag                                                                                                        |
+| `path`         | string | No       | [read/delete] Relative path, e.g. `projects/my-project.md`                                                                  |
+| `filename`     | string | No       | [write] Filename with or without .md extension                                                                              |
+| `content`      | string | No       | [write] Full Markdown content (max 1MB)                                                                                     |
+| `token_budget` | number | No       | [wakeup] Max tokens for the rendered L0+L1 blob (chars/4 estimate, default 800, range 50–8000)                              |
 
 **Action: list**
 
@@ -256,6 +257,26 @@ Manual git pull + push.
 ```
 knowledge with action "sync"
 ```
+
+**Action: wakeup**
+
+Return a small "L0 + L1" context blob: identity (from `~/agent-knowledge/identity.md`) plus the highest-weighted entries, fit under a token budget. Call once at session start so the agent has its world loaded before issuing any real search.
+
+Weight = `recency × log(size+1)` — recently-edited and substantial entries float to the top. The blob is rendered as Markdown with one bullet per L1 entry; each bullet is a short excerpt.
+
+```
+knowledge with action "wakeup"
+knowledge with action "wakeup", token_budget 1200
+knowledge with action "wakeup", category "projects"
+```
+
+**Response:**
+
+- `identity` — text from `identity.md`, or a default placeholder.
+- `entries` — array of `{ path, title, weight, excerpt }`, top-weighted first.
+- `rendered` — the assembled Markdown blob ready to paste into a system prompt.
+- `token_estimate` — `chars / 4`.
+- `truncated` — `true` when the budget cut off the L1 list.
 
 ---
 

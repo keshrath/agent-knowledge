@@ -53,6 +53,9 @@ export async function indexKnowledgeEntry(path: string, content: string): Promis
 
 /**
  * Index session messages into the vector store.
+ *
+ * Honors `config.indexVerbatim` — when false, the verbatim per-message
+ * chunking is skipped (auto-distillation still runs separately).
  */
 export async function indexSessionMessages(
   sessionId: string,
@@ -61,8 +64,13 @@ export async function indexSessionMessages(
   const provider = await getEmbeddingProvider();
   if (!provider) return;
 
+  const config = getConfig();
+  if (!config.indexVerbatim) return;
+
   const store = getVectorStore();
-  const chunks = chunkSession(messages);
+  // Filter very short messages (< 30 chars) — they tend to be ack-noise
+  // like "ok" or "thanks" with no retrieval signal.
+  const chunks = chunkSession(messages, { minChunkSize: 30 });
   if (chunks.length === 0) return;
 
   const texts = chunks.map((c) => c.text);

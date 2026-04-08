@@ -13,6 +13,12 @@ export interface KnowledgeConfig {
   embeddingAlpha: number;
   gitUrl: string | undefined;
   autoDistill: boolean;
+  /**
+   * When true (default), session messages are chunked verbatim and indexed
+   * into the vector store so raw conversation is retrievable later.
+   * Disable only if disk usage is a concern; auto-distillation runs separately.
+   */
+  indexVerbatim: boolean;
 }
 
 // ── Persistent config file (~/.config/knowledge/config.json) ───────────────────
@@ -23,6 +29,7 @@ export interface PersistedConfig {
   autoDistill?: boolean;
   embeddingProvider?: string;
   embeddingAlpha?: number;
+  indexVerbatim?: boolean;
 }
 
 function getConfigDir(): string {
@@ -120,6 +127,12 @@ export function getConfig(): KnowledgeConfig {
       ? autoDistillEnv.toLowerCase() !== 'false'
       : (persisted.autoDistill ?? true);
 
+  const indexVerbatimEnv = process.env.KNOWLEDGE_INDEX_VERBATIM;
+  const indexVerbatim =
+    indexVerbatimEnv !== undefined
+      ? indexVerbatimEnv.toLowerCase() !== 'false'
+      : (persisted.indexVerbatim ?? true);
+
   return {
     memoryDir,
     dataDir,
@@ -129,6 +142,7 @@ export function getConfig(): KnowledgeConfig {
     embeddingAlpha,
     gitUrl,
     autoDistill,
+    indexVerbatim,
   };
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.3.27",
+  "version": "1.4.0",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -37,6 +37,7 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "tsx bench/run.ts",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",
@@ -89,6 +90,7 @@
     "husky": "^9.0.0",
     "lint-staged": "^16.0.0",
     "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.57.2",
     "vitest": "^3.0.0"
