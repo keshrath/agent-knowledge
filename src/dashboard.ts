@@ -9,14 +9,58 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import {
-  createRouter,
-  createRateLimiter,
-  json,
-  serveStatic,
-  setupWebSocket,
-  type RouteHandler,
-} from 'agent-common';
+import { createRouter, json, serveStatic, setupWebSocket, type RouteHandler } from 'agent-common';
+
+// ── Inline rate limiter ──────────────────────────────────────────────────────
+// agent-common no longer ships createRateLimiter; reproduce the minimal token
+// bucket we depend on locally. Keyed by remote IP, with named windows.
+
+interface RateWindow {
+  max: number;
+  windowMs: number;
+}
+
+interface RateLimiterOptions {
+  windows: Record<string, RateWindow>;
+}
+
+interface RateCheckResult {
+  allowed: boolean;
+  limit: number;
+  resetAt: number;
+}
+
+interface BucketEntry {
+  count: number;
+  resetAt: number;
+}
+
+function createRateLimiter(opts: RateLimiterOptions) {
+  const buckets = new Map<string, BucketEntry>();
+  return {
+    check(req: http.IncomingMessage, windowName = 'default'): RateCheckResult {
+      const win = opts.windows[windowName] ?? opts.windows.default;
+      if (!win) return { allowed: true, limit: Infinity, resetAt: Date.now() };
+      const ip =
+        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        req.socket.remoteAddress ||
+        'unknown';
+      const key = `${windowName}:${ip}`;
+      const now = Date.now();
+      let entry = buckets.get(key);
+      if (!entry || entry.resetAt <= now) {
+        entry = { count: 0, resetAt: now + win.windowMs };
+        buckets.set(key, entry);
+      }
+      entry.count += 1;
+      return {
+        allowed: entry.count <= win.max,
+        limit: win.max,
+        resetAt: entry.resetAt,
+      };
+    },
+  };
+}
 import { listEntries, readEntry } from './knowledge/store.js';
 import { searchKnowledge } from './knowledge/search.js';
 import { getEntryScoring, decayFactor, maturityMultiplier } from './knowledge/scoring.js';

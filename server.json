@@ -6,12 +6,12 @@
     "url": "https://github.com/keshrath/agent-knowledge",
     "source": "github"
   },
-  "version": "1.3.21",
+  "version": "1.3.22",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "agent-knowledge",
-      "version": "1.3.21",
+      "version": "1.3.22",
       "transport": {
         "type": "stdio"
       }
