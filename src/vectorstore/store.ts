@@ -611,6 +611,99 @@ export class VectorStore {
     }
   }
 
+  /**
+   * List distinct session source_ids that currently have embeddings.
+   */
+  listIndexedSessionIds(): string[] {
+    let db: Database;
+    try {
+      db = this.requireConnection();
+    } catch (err) {
+      console.error(
+        '[knowledge] listIndexedSessionIds init:',
+        err instanceof Error ? err.message : err,
+      );
+      return [];
+    }
+    try {
+      const rows = db
+        .prepare("SELECT DISTINCT source_id FROM embeddings WHERE source = 'session'")
+        .all() as Array<{ source_id: string }>;
+      return rows.map((r) => r.source_id);
+    } catch (err) {
+      console.error(`[knowledge] listIndexedSessionIds failed: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Delete embeddings for sessions whose source_id is not in `liveIds`.
+   * Returns the number of orphan sessions removed and the chunk count deleted.
+   */
+  pruneOrphanSessions(liveIds: Set<string>): { sessions: number; chunks: number } {
+    const indexed = this.listIndexedSessionIds();
+    const orphans = indexed.filter((id) => !liveIds.has(id));
+    if (orphans.length === 0) return { sessions: 0, chunks: 0 };
+
+    let db: Database;
+    try {
+      db = this.requireConnection();
+    } catch (err) {
+      console.error('[knowledge] pruneOrphans init:', err instanceof Error ? err.message : err);
+      return { sessions: 0, chunks: 0 };
+    }
+
+    let chunks = 0;
+    try {
+      const countStmt = db.prepare(
+        "SELECT COUNT(*) as count FROM embeddings WHERE source = 'session' AND source_id = ?",
+      );
+      const transaction = db.transaction(() => {
+        for (const sid of orphans) {
+          const c = countStmt.get(sid) as { count: number };
+          chunks += c.count;
+          if (this.vecAvailable) {
+            const ids = db
+              .prepare("SELECT id FROM embeddings WHERE source = 'session' AND source_id = ?")
+              .all(sid) as Array<{ id: string }>;
+            const deleteVec = db.prepare('DELETE FROM vec_idx WHERE id = ?');
+            for (const row of ids) deleteVec.run(row.id);
+          }
+          db.prepare("DELETE FROM embeddings WHERE source = 'session' AND source_id = ?").run(sid);
+        }
+      });
+      transaction();
+    } catch (err) {
+      console.error(`[knowledge] pruneOrphans failed: ${err}`);
+    }
+    return { sessions: orphans.length, chunks };
+  }
+
+  /**
+   * Run SQLite VACUUM to reclaim free pages. Returns the size delta in bytes.
+   */
+  vacuum(): { beforeBytes: number; afterBytes: number; reclaimedBytes: number } {
+    let beforeBytes = 0;
+    let afterBytes = 0;
+    try {
+      beforeBytes = statSync(this.dbPath).size;
+    } catch {
+      /* ignore */
+    }
+    try {
+      const db = this.requireConnection();
+      db.exec('VACUUM');
+    } catch (err) {
+      console.error(`[knowledge] VACUUM failed: ${err}`);
+    }
+    try {
+      afterBytes = statSync(this.dbPath).size;
+    } catch {
+      /* ignore */
+    }
+    return { beforeBytes, afterBytes, reclaimedBytes: Math.max(0, beforeBytes - afterBytes) };
+  }
+
   /** Close the database connection and release resources. */
   close(): void {
     try {

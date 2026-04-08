@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.27 (2026-04-08)
+
+### Added
+
+- **`knowledge_admin` actions `prune_orphans` and `vacuum`.** Prune deletes embeddings for sessions that no longer exist on disk (compares `listSessions()` against `SELECT DISTINCT source_id FROM embeddings WHERE source='session'`); auto-VACUUMs after pruning unless disabled. Standalone `vacuum` action reclaims free pages independently. New methods on `VectorStore`: `listIndexedSessionIds`, `pruneOrphanSessions`, `vacuum`. Live cleanup on the dev DB pruned 121 orphan sessions (69364 chunks) and reclaimed 352.4 MB (793 → 441 MB).
+
+### Fixed
+
+- **Sessions header counter showed loaded-page count, not total.** `/api/sessions` now returns `{sessions, total}` when `limit`/`offset` is set; the dashboard header stat uses `total` so it stays at the true session count instead of growing as you scroll.
+
 ## 1.3.26 (2026-04-08)
 
 ### Fixed

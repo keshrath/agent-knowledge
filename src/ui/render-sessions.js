@@ -21,6 +21,7 @@
       if (filter) url += `&project=${encodeURIComponent(filter)}`;
       const data = await K.api(url);
       const page = Array.isArray(data) ? data : data.sessions || [];
+      const total = !Array.isArray(data) && typeof data.total === 'number' ? data.total : null;
 
       if (isFirstPage) {
         state.sessions.list = page;
@@ -30,7 +31,8 @@
 
       state.sessions.offset = offset + page.length;
       state.sessions.allLoaded = page.length < PAGE_SIZE;
-      state.stats.sessionCount = state.sessions.list.length;
+      if (total !== null) state.sessions.total = total;
+      state.stats.sessionCount = state.sessions.total ?? state.sessions.list.length;
       K.updateStats(state, el);
       updateProjectFilter(state.sessions.list, el);
       renderSessions(state, el);

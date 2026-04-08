@@ -158,17 +158,28 @@ export function createServer(options?: ServerOptions): Server {
       {
         name: 'knowledge_admin',
         description:
-          'Admin operations: view vector store stats, view/update configuration, or rebuild embeddings. ' +
+          'Admin operations: view vector store stats, view/update configuration, rebuild embeddings, ' +
+          'prune orphan session embeddings, or VACUUM the database. ' +
           'Use action "status" for index stats, "config" to view or update settings, ' +
-          '"rebuild_embeddings" to re-embed all knowledge entries (useful when switching providers).',
+          '"rebuild_embeddings" to re-embed all knowledge entries (useful when switching providers), ' +
+          '"prune_orphans" to delete embeddings for sessions no longer present on disk, ' +
+          '"vacuum" to reclaim free pages.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             action: {
               type: 'string',
-              enum: ['status', 'config', 'rebuild_embeddings'],
+              enum: ['status', 'config', 'rebuild_embeddings', 'prune_orphans', 'vacuum'],
               description:
-                'Action: status (vector store stats), config (view/update settings), rebuild_embeddings (re-embed all entries)',
+                'Action: status (vector store stats), config (view/update settings), rebuild_embeddings (re-embed all entries), prune_orphans (delete embeddings for missing sessions), vacuum (reclaim free pages)',
+            },
+            vacuum: {
+              type: 'boolean',
+              description: 'Run VACUUM after pruning (action=prune_orphans, default true)',
+            },
+            force_vacuum: {
+              type: 'boolean',
+              description: 'Run VACUUM even if no orphans were pruned (action=prune_orphans)',
             },
             git_url: {
               type: 'string',

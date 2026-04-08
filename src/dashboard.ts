@@ -376,10 +376,16 @@ const sessionsListRoute: RouteHandler = (req, res) => {
   const offsetParam = url.searchParams.get('offset');
   const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : undefined;
   const offset = offsetParam ? parseInt(offsetParam, 10) : 0;
-  let sessions = listSessions(project);
+  const all = listSessions(project);
+  const total = all.length;
+  let sessions = all;
   if (offset > 0) sessions = sessions.slice(offset);
   if (limit !== undefined) sessions = sessions.slice(0, limit);
-  json(res, sessions);
+  if (limitParam !== null || offsetParam !== null) {
+    json(res, { sessions, total });
+  } else {
+    json(res, sessions);
+  }
 };
 
 const sessionSummaryRoute: RouteHandler = (req, res, params) => {

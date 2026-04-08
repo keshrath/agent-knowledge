@@ -436,8 +436,37 @@ export async function handleKnowledgeAdmin(args: Record<string, unknown>): Promi
         note: 'Config stored at a tool-agnostic location. Env vars override persisted config.',
       });
     }
+    case 'prune_orphans': {
+      const store = new VectorStore();
+      const live = new Set(listSessions().map((s) => s.sessionId));
+      const result = store.pruneOrphanSessions(live);
+      const doVacuum = _optionalBoolean(a, 'vacuum') ?? true;
+      let vacuum: { beforeBytes: number; afterBytes: number; reclaimedBytes: number } | null = null;
+      if (doVacuum && (result.sessions > 0 || _optionalBoolean(a, 'force_vacuum'))) {
+        vacuum = store.vacuum();
+      }
+      return ok({
+        message:
+          result.sessions === 0
+            ? 'No orphan sessions found'
+            : `Pruned ${result.sessions} orphan session(s) (${result.chunks} chunks)`,
+        prunedSessions: result.sessions,
+        prunedChunks: result.chunks,
+        vacuum,
+      });
+    }
+    case 'vacuum': {
+      const store = new VectorStore();
+      const result = store.vacuum();
+      return ok({
+        message: `VACUUM complete, reclaimed ${(result.reclaimedBytes / (1024 * 1024)).toFixed(2)} MB`,
+        ...result,
+      });
+    }
     default:
-      return err(`Unknown action: ${action}. Valid actions: status, config, rebuild_embeddings`);
+      return err(
+        `Unknown action: ${action}. Valid actions: status, config, rebuild_embeddings, prune_orphans, vacuum`,
+      );
   }
 }
 
