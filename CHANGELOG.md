@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1 (2026-04-08)
+
+Documentation cleanup. No code or behavior changes vs 1.4.0.
+
 ## 1.4.0 (2026-04-08)
 
 Seven additions focused on retrieval quality, temporal reasoning, and measurable evaluation.
