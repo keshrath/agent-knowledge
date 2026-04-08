@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.3.23 (2026-04-08)
+
+### Fixed
+
+- **Standalone dashboard stuck on "Connecting to agent-knowledge..." overlay.** Removed `<script src="template.js">` from `src/ui/index.html`. Since v1.3.9 the standalone autoinit guard in `app.js` (`if (typeof K._template !== 'function')`) was always false because `template.js` was loaded in standalone mode, so `init()` never ran and the loading overlay never hid. `template.js` is only needed by the plugin host (loaded via `agent-desk-plugin.json` `uiFiles`); standalone has the markup hardcoded in the HTML and doesn't need the runtime template.
+
+## 1.3.22 (2026-04-08)
+
+### Fixed
+
+- **Build broken: `createRateLimiter` no longer exported by `agent-common`.** Inlined a minimal token-bucket rate limiter in `src/dashboard.ts` (keyed by remote IP, named `default` + `heavy` windows) to replace the missing import. Resolves the TS2305 build error and re-greens the failing `tests/dashboard.test.ts` file. Vitest count back to 352.
+
+### Added
+
+- **Playwright E2E dashboard test suite** at `tests/e2e-ui/dashboard.pw.ts`. Boots the standalone dashboard with a temp `KNOWLEDGE_MEMORY_DIR` / `KNOWLEDGE_DATA_DIR` so the real `~/agent-knowledge/` is never touched. Seeds three markdown entries, then asserts: page loads with no console errors, REST `/api/knowledge` returns the seeded entries, REST `/api/knowledge/search?q=…` returns results, the search input renders + accepts a query without errors. Runnable via `npm run test:e2e:ui`. Devdep `@playwright/test`.
+
+## 1.3.21 (2026-04-08)
+
+### Changed
+
+- Adopted `createRateLimiter` from agent-common 1.1.0 in place of the local rate-limiter implementation. (Subsequently reverted in 1.3.22 after agent-common dropped the export.)
+
+## 1.3.20 (2026-04-08)
+
+### Changed
+
+- `dashboard.ts` refactored to use `agent-common` helpers (`createRouter`, `json`, `serveStatic`, `setupWebSocket`). Version-file bumps in a follow-up commit.
+
+## 1.3.19 (2026-04-08)
+
+### Fixed
+
+- Raised timeout on the flaky session-search tests for slow CI runners.
+
+## 1.3.18 (2026-04-08)
+
+### Changed
+
+- Added `agent-common` as a dependency for package metadata.
+
 ## 1.3.17 (2026-04-07)
 
 ### Changed
