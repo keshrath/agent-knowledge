@@ -1,4 +1,4 @@
-import { TfIdfIndex } from '../search/tfidf.js';
+import { BM25Index } from '../search/bm25.js';
 import { getEntryScoring, computeFinalScore } from './scoring.js';
 import { buildExcerpt } from '../search/excerpt.js';
 import { listEntries, readEntry, KnowledgeEntry } from './store.js';
@@ -31,7 +31,7 @@ export interface SearchResult {
 // ── TF-IDF index cache for knowledge entries ──────────────────────────────
 
 interface KnowledgeIndexCache {
-  index: TfIdfIndex;
+  index: BM25Index;
   documents: Array<{ entry: KnowledgeEntry; content: string }>;
   timestamp: number;
   /** Cache key: dir + category */
@@ -49,7 +49,7 @@ export function invalidateKnowledgeIndexCache(): void {
 function getOrBuildKnowledgeIndex(
   dir: string,
   category?: string,
-): { index: TfIdfIndex; documents: Array<{ entry: KnowledgeEntry; content: string }> } {
+): { index: BM25Index; documents: Array<{ entry: KnowledgeEntry; content: string }> } {
   const cacheKey = `${dir}:${category ?? ''}`;
   const now = Date.now();
 
@@ -73,7 +73,7 @@ function getOrBuildKnowledgeIndex(
     }
   }
 
-  const index = new TfIdfIndex();
+  const index = new BM25Index();
   for (const doc of documents) {
     index.addDocument(doc.entry.path, doc.content);
   }

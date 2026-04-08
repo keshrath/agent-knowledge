@@ -6,7 +6,8 @@ import {
   getSessionMeta,
   type SessionMessage,
 } from './parser.js';
-import { TfIdfIndex, recencyDecay } from '../search/tfidf.js';
+import { recencyDecay } from '../search/tfidf.js';
+import { BM25Index } from '../search/bm25.js';
 import { buildExcerpt } from '../search/excerpt.js';
 import type { SearchResult } from '../search/types.js';
 import { getEmbeddingProvider } from '../embeddings/index.js';
@@ -69,7 +70,7 @@ export async function scopedSearch(
     (p) => !project || p.name.toLowerCase().includes(project.toLowerCase()),
   );
 
-  const index = new TfIdfIndex();
+  const index = new BM25Index();
   const docMap = new Map<
     string,
     {

@@ -37,6 +37,7 @@ import fs from 'fs';
 import path from 'path';
 import { homedir } from 'os';
 import { TfIdfIndex } from '../src/search/tfidf.js';
+import { BM25Index } from '../src/search/bm25.js';
 import { applyBoosts, buildBoostContext, hasAnyBoostSignal } from '../src/search/boosts.js';
 import { getEmbeddingProvider } from '../src/embeddings/index.js';
 
@@ -59,6 +60,8 @@ interface Question {
 
 const args = process.argv.slice(2);
 const useBoosts = args.includes('--boosts');
+const rankerArg = args.find((a) => a.startsWith('--ranker'));
+const ranker = rankerArg ? (rankerArg.split('=')[1] ?? args[args.indexOf(rankerArg) + 1]) : 'tfidf';
 const useSemantic = args.includes('--semantic');
 const useHybrid = args.includes('--hybrid');
 const alphaArg = args.find((a) => a.startsWith('--alpha'));
@@ -182,8 +185,8 @@ for (const q of questions) {
     continue;
   }
 
-  // Build a fresh TF-IDF index over this question's haystack
-  const index = new TfIdfIndex();
+  // Build a fresh sparse index over this question's haystack
+  const index: TfIdfIndex | BM25Index = ranker === 'bm25' ? new BM25Index() : new TfIdfIndex();
   const sessionDates = new Map<string, string>();
   for (let i = 0; i < q.haystack_sessions.length; i++) {
     const id = q.haystack_session_ids[i];

@@ -1,4 +1,5 @@
-import { TfIdfIndex, recencyDecay } from '../search/tfidf.js';
+import { recencyDecay } from '../search/tfidf.js';
+import { BM25Index } from '../search/bm25.js';
 import { buildExcerpt } from '../search/excerpt.js';
 import { buildBoostContext, applyBoosts, hasAnyBoostSignal } from '../search/boosts.js';
 import {
@@ -216,7 +217,7 @@ interface DocRef {
 }
 
 interface IndexCache {
-  index: TfIdfIndex;
+  index: BM25Index;
   docMap: Map<string, DocRef>;
   timestamp: number;
   projectHash: string;
@@ -229,7 +230,7 @@ const INDEX_TTL = 60_000; // 60 seconds
 function getOrBuildIndex(
   projects: Array<{ name: string; path: string }>,
   role: string,
-): { index: TfIdfIndex; docMap: Map<string, DocRef> } {
+): { index: BM25Index; docMap: Map<string, DocRef> } {
   const projectHash = projects.map((p) => p.name).join(',');
   const now = Date.now();
 
@@ -242,7 +243,7 @@ function getOrBuildIndex(
     return _indexCache;
   }
 
-  const index = new TfIdfIndex();
+  const index = new BM25Index();
   const docMap = new Map<string, DocRef>();
   let docCounter = 0;
 

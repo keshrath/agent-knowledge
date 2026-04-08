@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.5.0 (2026-04-08)
+
+### Changed
+
+- **Sparse ranker swapped from naive TF-IDF cosine to Okapi BM25** (`src/search/bm25.ts`, `k1=1.2`, `b=0.75`). The TF-IDF cosine ranker under-weighted long sessions because cosine normalization punishes document length. BM25's length normalization fixes this for the long, multi-turn sessions LongMemEval is built on. Wired into all three production search call sites: `src/sessions/search.ts`, `src/sessions/scopes.ts`, `src/knowledge/search.ts`. `src/knowledge/consolidate.ts` keeps TF-IDF for doc-to-doc duplicate detection (a different use case).
+
+### Benchmark — LongMemEval (full 500 questions, `longmemeval_s_cleaned`)
+
+| Mode                                            | R@1       | R@5       | R@10      |
+| ----------------------------------------------- | --------- | --------- | --------- |
+| 1.4.2 — TF-IDF + boosts (sparse)                | 59.8%     | 83.8%     | 91.2%     |
+| **1.5.0 — BM25 + boosts (sparse)**              | **87.6%** | **97.2%** | **98.4%** |
+| **1.5.0 — BM25 + semantic (hybrid, alpha=0.3)** | **89.6%** | **98.8%** | **99.6%** |
+
+Per-category R@5 deltas (sparse, vs 1.4.2):
+
+| Category                  | 1.4.2     | 1.5.0     | Δ           |
+| ------------------------- | --------- | --------- | ----------- |
+| single-session-user       | 90.0%     | 100.0%    | +10.0pp     |
+| single-session-assistant  | 87.5%     | 100.0%    | +12.5pp     |
+| single-session-preference | 33.3%     | 86.7%     | **+53.4pp** |
+| multi-session             | 84.2%     | 97.0%     | +12.8pp     |
+| temporal-reasoning        | 84.2%     | 95.5%     | +11.3pp     |
+| knowledge-update          | 93.6%     | 100.0%    | +6.4pp      |
+| **OVERALL**               | **83.8%** | **97.2%** | **+13.4pp** |
+
+The biggest jump is `single-session-preference` (33.3% → 86.7%), which had been the dead category in 1.4.2. Preference questions are about long sessions where the user states a habit indirectly; cosine normalization had been ranking those long documents too low.
+
+Reproduce: `npx tsx bench/longmemeval.ts --boosts --ranker bm25` (sparse) or `--hybrid --boosts --ranker bm25` (hybrid, ~70 min).
+
+### Added
+
+- `bench/longmemeval.ts --ranker {tfidf|bm25}` flag (default `tfidf` so the historical baseline stays reproducible).
+- `tests/bm25.test.ts` — 9 unit tests for `BM25Index` covering ranking, length normalization, dedup on re-add, and edge cases.
+
+### Notes
+
+- Two changes were attempted and reverted because they failed their measured gates: a regex-based preference-extraction synthetic-chunk pass (no movement on the preference category — the haystack distractors also contain preference-shaped statements, so vocabulary injection added noise without changing rank) and Reciprocal Rank Fusion as the hybrid blender (alpha-weighted blend beat RRF by 1pp on a 100q sample). Both removed; no dead code shipped.
+
 ## 1.4.2 (2026-04-08)
 
 ### Added
