@@ -1,7 +1,15 @@
+// =============================================================================
+// agent-knowledge dashboard
+//
+// HTTP + WebSocket plumbing is delegated to agent-common (createRouter, json,
+// serveStatic, setupWebSocket). Only the knowledge-specific routes, the
+// per-endpoint heavy rate limiter, and the state snapshot live here.
+// =============================================================================
+
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { WebSocketServer, WebSocket } from 'ws';
+import { createRouter, json, serveStatic, setupWebSocket, type RouteHandler } from 'agent-common';
 import { listEntries, readEntry } from './knowledge/store.js';
 import { searchKnowledge } from './knowledge/search.js';
 import { getEntryScoring, decayFactor, maturityMultiplier } from './knowledge/scoring.js';
@@ -24,15 +32,14 @@ import { getVersion } from './version.js';
 
 const VERSION = getVersion();
 const DEFAULT_PORT = 3423;
-const HEARTBEAT_INTERVAL = 30_000;
-const MAX_WS_CONNECTIONS = 50;
-const MAX_WS_MESSAGE_SIZE = 4096;
 
-// ── Rate limiter ──────────────────────────────────────────────────────────────
+// ── Per-endpoint rate limiter (knowledge-specific: heavy bucket for embeddings) ─
+// Kept local rather than generalized into agent-common because the
+// "heavy endpoints" concept is unique to this server's embedding workload.
 
-const RATE_LIMIT_WINDOW = 60_000; // 60 seconds
-const RATE_LIMIT_MAX = 100; // max requests per window
-const RATE_LIMIT_MAX_HEAVY = 20; // max for search/analyze endpoints
+const RATE_LIMIT_WINDOW = 60_000;
+const RATE_LIMIT_MAX = 100;
+const RATE_LIMIT_MAX_HEAVY = 20;
 
 interface RateBucket {
   count: number;
@@ -42,43 +49,13 @@ interface RateBucket {
 const rateBuckets = new Map<string, RateBucket>();
 const rateBucketsHeavy = new Map<string, RateBucket>();
 
-// Cleanup stale buckets every 5 minutes
 const cleanupTimer = setInterval(() => {
   const now = Date.now();
-  for (const [key, bucket] of rateBuckets) {
-    if (bucket.resetAt <= now) rateBuckets.delete(key);
-  }
-  for (const [key, bucket] of rateBucketsHeavy) {
-    if (bucket.resetAt <= now) rateBucketsHeavy.delete(key);
-  }
+  for (const [key, b] of rateBuckets) if (b.resetAt <= now) rateBuckets.delete(key);
+  for (const [key, b] of rateBucketsHeavy) if (b.resetAt <= now) rateBucketsHeavy.delete(key);
 }, 300_000);
 cleanupTimer.unref();
 
-function getClientIp(req: http.IncomingMessage): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
-  return req.socket.remoteAddress ?? 'unknown';
-}
-
-function checkRateLimit(
-  bucketMap: Map<string, RateBucket>,
-  ip: string,
-  max: number,
-): { allowed: boolean; remaining: number; resetAt: number } {
-  const now = Date.now();
-  let bucket = bucketMap.get(ip);
-
-  if (!bucket || bucket.resetAt <= now) {
-    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
-    bucketMap.set(ip, bucket);
-  }
-
-  bucket.count++;
-  const remaining = Math.max(0, max - bucket.count);
-  return { allowed: bucket.count <= max, remaining, resetAt: bucket.resetAt };
-}
-
-/** Endpoints that involve embedding or heavy computation. */
 const HEAVY_ENDPOINTS = new Set([
   '/api/knowledge/search',
   '/api/knowledge/consolidate',
@@ -87,615 +64,398 @@ const HEAVY_ENDPOINTS = new Set([
   '/api/sessions/recall',
 ]);
 
-const MIME_TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
+function getClientIp(req: http.IncomingMessage): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+function checkBucket(
+  bucket: Map<string, RateBucket>,
+  ip: string,
+  max: number,
+): { allowed: boolean; resetAt: number } {
+  const now = Date.now();
+  let b = bucket.get(ip);
+  if (!b || b.resetAt <= now) {
+    b = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+    bucket.set(ip, b);
+  }
+  b.count++;
+  return { allowed: b.count <= max, resetAt: b.resetAt };
+}
+
+function rateLimit(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
+  if (!pathname.startsWith('/api/')) return false;
+  const ip = getClientIp(req);
+  const general = checkBucket(rateBuckets, ip, RATE_LIMIT_MAX);
+  if (!general.allowed) {
+    res.writeHead(429, {
+      'Content-Type': 'application/json',
+      'Retry-After': String(Math.ceil((general.resetAt - Date.now()) / 1000)),
+      'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
+      'X-RateLimit-Remaining': '0',
+    });
+    res.end(JSON.stringify({ error: 'Too many requests' }));
+    return true;
+  }
+  if (HEAVY_ENDPOINTS.has(pathname)) {
+    const heavy = checkBucket(rateBucketsHeavy, ip, RATE_LIMIT_MAX_HEAVY);
+    if (!heavy.allowed) {
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': String(Math.ceil((heavy.resetAt - Date.now()) / 1000)),
+        'X-RateLimit-Limit': String(RATE_LIMIT_MAX_HEAVY),
+        'X-RateLimit-Remaining': '0',
+      });
+      res.end(JSON.stringify({ error: 'Too many requests (rate limit for search/analyze)' }));
+      return true;
+    }
+  }
+  return false;
+}
+
+// ── UI dir resolution ────────────────────────────────────────────────────────
 
 function resolveUiDir(): string {
   const moduleUrl = new URL(import.meta.url);
-  let moduleDir: string;
-  if (process.platform === 'win32') {
-    moduleDir = moduleUrl.pathname.replace(/^\/([a-zA-Z]:)/, '$1');
-  } else {
-    moduleDir = moduleUrl.pathname;
-  }
+  let moduleDir =
+    process.platform === 'win32'
+      ? moduleUrl.pathname.replace(/^\/([a-zA-Z]:)/, '$1')
+      : moduleUrl.pathname;
   moduleDir = path.dirname(moduleDir);
-
   const srcUi = path.resolve(moduleDir, 'ui');
   if (fs.existsSync(srcUi)) return srcUi;
-
   const distUi = path.resolve(moduleDir, '..', 'dist', 'ui');
   if (fs.existsSync(distUi)) return distUi;
-
   return srcUi;
 }
 
-function jsonResponse(res: http.ServerResponse, data: unknown, status = 200): void {
-  const body = JSON.stringify(data, null, 2);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  res.end(body);
+// ── State snapshot (cached, used by WS) ──────────────────────────────────────
+
+interface Snapshot {
+  knowledge: ReturnType<typeof listEntries>;
+  sessionCount: number;
+  vectorCount: number;
+  builtAt: number;
 }
 
-function errorResponse(res: http.ServerResponse, message: string, status = 500): void {
-  jsonResponse(res, { error: message }, status);
-}
+let snapshotCache: Snapshot | null = null;
+const SNAPSHOT_TTL = 30_000;
 
-function serveStatic(uiDir: string, reqPath: string, res: http.ServerResponse): void {
-  const filePath = reqPath === '/' ? '/index.html' : reqPath;
+function buildSnapshot(): Snapshot {
+  const now = Date.now();
+  if (snapshotCache && now - snapshotCache.builtAt < SNAPSHOT_TTL) return snapshotCache;
 
-  // Decode and reject path traversal attempts
-  let decoded: string;
+  const config = getConfig();
+  let knowledge: ReturnType<typeof listEntries> = [];
+  let sessionCount = 0;
+  let vectorCount = snapshotCache?.vectorCount ?? 0;
+
   try {
-    decoded = decodeURIComponent(filePath);
-  } catch (err) {
-    console.error('[knowledge] decode URI:', err instanceof Error ? err.message : err);
-    errorResponse(res, 'Bad request', 400);
-    return;
-  }
-
-  if (decoded.includes('\0') || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(decoded)) {
-    errorResponse(res, 'Forbidden', 403);
-    return;
-  }
-
-  const resolved = path.resolve(uiDir, '.' + decoded);
-
-  // Use realpathSync to resolve symlinks for robust traversal check
-  let realBase: string;
-  try {
-    realBase = fs.realpathSync(uiDir);
-  } catch {
-    errorResponse(res, 'Not found', 404);
-    return;
-  }
-
-  if (!resolved.startsWith(realBase)) {
-    errorResponse(res, 'Forbidden', 403);
-    return;
-  }
-
-  // Also verify the actual resolved file (after symlink resolution)
-  let realFilePath: string;
-  try {
-    realFilePath = fs.realpathSync(resolved);
-  } catch {
-    realFilePath = resolved;
-  }
-  if (!realFilePath.startsWith(realBase)) {
-    errorResponse(res, 'Forbidden', 403);
-    return;
-  }
-
-  const ext = path.extname(resolved).toLowerCase();
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-
-  fs.readFile(resolved, (err, data) => {
-    if (err) {
-      if (err.code === 'ENOENT') {
-        errorResponse(res, 'Not found', 404);
-      } else {
-        errorResponse(res, 'Internal server error', 500);
+    knowledge = listEntries(config.memoryDir);
+    for (const proj of getProjectDirs()) sessionCount += getSessionFiles(proj.path).length;
+    if (!snapshotCache) {
+      try {
+        vectorCount = new VectorStore().stats().totalEntries;
+      } catch (err) {
+        console.error('[knowledge] vector stats:', err instanceof Error ? err.message : err);
       }
+    }
+  } catch (err) {
+    console.error('[knowledge] snapshot:', err instanceof Error ? err.message : err);
+  }
+
+  snapshotCache = { knowledge, sessionCount, vectorCount, builtAt: now };
+  return snapshotCache;
+}
+
+function fullState(): Record<string, unknown> {
+  const s = buildSnapshot();
+  return {
+    knowledge: s.knowledge,
+    stats: {
+      knowledge_entries: s.knowledge.length,
+      session_count: s.sessionCount,
+      vector_count: s.vectorCount,
+      uptime: process.uptime(),
+      version: VERSION,
+    },
+  };
+}
+
+// ── Routes ───────────────────────────────────────────────────────────────────
+
+function urlOf(req: http.IncomingMessage): URL {
+  return new URL(req.url ?? '/', `http://${req.headers.host || 'localhost'}`);
+}
+
+const healthRoute: RouteHandler = (_req, res) => {
+  const config = getConfig();
+  const entries = listEntries(config.memoryDir);
+  json(res, {
+    status: 'ok',
+    version: VERSION,
+    uptime: process.uptime(),
+    knowledge_entries: entries.length,
+  });
+};
+
+const indexStatusRoute: RouteHandler = (_req, res) => {
+  try {
+    json(res, new VectorStore().stats());
+  } catch (err) {
+    console.error('[knowledge] index-status:', err instanceof Error ? err.message : err);
+    json(res, {
+      totalEntries: 0,
+      knowledgeEntries: 0,
+      sessionEntries: 0,
+      uniqueSessions: 0,
+      dbSizeMB: 0,
+      provider: null,
+      dimensions: 0,
+    });
+  }
+};
+
+const knowledgeSearchRoute: RouteHandler = (req, res) => {
+  const memoryDir = getConfig().memoryDir;
+  const url = urlOf(req);
+  const q = url.searchParams.get('q') || '';
+  const category = url.searchParams.get('category') || undefined;
+  const maxResults = url.searchParams.get('max_results');
+  const results = searchKnowledge(memoryDir, q, {
+    category,
+    maxResults: maxResults ? parseInt(maxResults, 10) : undefined,
+  });
+  try {
+    const scoring = getEntryScoring();
+    const scores = scoring.getScores(results.map((r) => r.entry.path));
+    const enriched = results.map((r) => {
+      const score = scores.get(r.entry.path);
+      return {
+        ...r,
+        maturity: score?.maturity ?? 'candidate',
+        access_count: score?.access_count ?? 0,
+        decay_factor: score?.last_accessed ? decayFactor(score.last_accessed) : 1,
+        maturity_multiplier: maturityMultiplier(score?.maturity ?? 'candidate'),
+      };
+    });
+    json(res, enriched);
+  } catch (err) {
+    console.error('[knowledge] search enrichment:', err instanceof Error ? err.message : err);
+    json(res, results);
+  }
+};
+
+const consolidateRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const category = url.searchParams.get('category') || undefined;
+  const thresholdParam = url.searchParams.get('threshold');
+  const threshold = thresholdParam ? parseFloat(thresholdParam) : 0.5;
+  json(res, consolidate(getConfig().memoryDir, category, threshold));
+};
+
+const reflectRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const category = url.searchParams.get('category') || undefined;
+  const maxParam = url.searchParams.get('max_entries');
+  const maxEntries = maxParam ? parseInt(maxParam, 10) : 20;
+  json(res, reflect(getConfig().memoryDir, category, maxEntries));
+};
+
+const knowledgeListRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const category = url.searchParams.get('category') || undefined;
+  const tag = url.searchParams.get('tag') || undefined;
+  const entries = listEntries(getConfig().memoryDir, category, tag);
+  try {
+    const scoring = getEntryScoring();
+    const scores = scoring.getScores(entries.map((e) => e.path));
+    const enriched = entries.map((e) => {
+      const score = scores.get(e.path);
+      return {
+        ...e,
+        maturity: score?.maturity ?? 'candidate',
+        access_count: score?.access_count ?? 0,
+        last_accessed: score?.last_accessed ?? null,
+      };
+    });
+    json(res, enriched);
+  } catch (err) {
+    console.error('[knowledge] entries enrichment:', err instanceof Error ? err.message : err);
+    json(res, entries);
+  }
+};
+
+const knowledgeLinksRoute: RouteHandler = (_req, res, params) => {
+  try {
+    json(res, getKnowledgeGraph().links(params.entryPath));
+  } catch (err) {
+    console.error('[knowledge] links:', err instanceof Error ? err.message : err);
+    json(res, []);
+  }
+};
+
+const knowledgeEntryRoute: RouteHandler = (_req, res, params) => {
+  const entryPath = params.entryPath;
+  const entry = readEntry(getConfig().memoryDir, entryPath);
+  try {
+    const score = getEntryScoring().getScore(entryPath);
+    json(res, {
+      ...entry,
+      maturity: score?.maturity ?? 'candidate',
+      access_count: score?.access_count ?? 0,
+      last_accessed: score?.last_accessed ?? null,
+      decay_factor: score?.last_accessed ? decayFactor(score.last_accessed) : 1,
+      maturity_multiplier: maturityMultiplier(score?.maturity ?? 'candidate'),
+    });
+  } catch (err) {
+    console.error('[knowledge] entry enrichment:', err instanceof Error ? err.message : err);
+    json(res, entry);
+  }
+};
+
+const sessionsSearchRoute: RouteHandler = async (req, res) => {
+  const url = urlOf(req);
+  const q = url.searchParams.get('q') || '';
+  const role = (url.searchParams.get('role') || 'all') as 'user' | 'assistant' | 'all';
+  const maxResults = url.searchParams.get('max_results');
+  const ranked = url.searchParams.get('ranked') !== 'false';
+  const project = url.searchParams.get('project') || undefined;
+  const semantic = url.searchParams.get('semantic') === 'true';
+  json(
+    res,
+    await searchSessions(q, {
+      role,
+      maxResults: maxResults ? parseInt(maxResults, 10) : 20,
+      ranked,
+      semantic,
+      project,
+    }),
+  );
+};
+
+const sessionsRecallRoute: RouteHandler = async (req, res) => {
+  const url = urlOf(req);
+  const scope = (url.searchParams.get('scope') || 'all') as SearchScope;
+  const q = url.searchParams.get('q') || '';
+  const maxResults = url.searchParams.get('max_results');
+  const project = url.searchParams.get('project') || undefined;
+  json(
+    res,
+    await scopedSearch(scope, q, {
+      maxResults: maxResults ? parseInt(maxResults, 10) : 20,
+      project,
+    }),
+  );
+};
+
+const sessionsListRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const project = url.searchParams.get('project') || undefined;
+  const limitParam = url.searchParams.get('limit');
+  const offsetParam = url.searchParams.get('offset');
+  const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : undefined;
+  const offset = offsetParam ? parseInt(offsetParam, 10) : 0;
+  let sessions = listSessions(project);
+  if (offset > 0) sessions = sessions.slice(offset);
+  if (limit !== undefined) sessions = sessions.slice(0, limit);
+  json(res, sessions);
+};
+
+const sessionSummaryRoute: RouteHandler = (req, res, params) => {
+  const project = urlOf(req).searchParams.get('project') || undefined;
+  const summary = getSessionSummary(params.sessionId, project);
+  if (!summary) json(res, { error: `Session ${params.sessionId} not found` }, 404);
+  else json(res, summary);
+};
+
+const sessionDetailRoute: RouteHandler = (req, res, params) => {
+  const url = urlOf(req);
+  const sessionId = params.sessionId;
+  const project = url.searchParams.get('project') || undefined;
+  const includeTools = url.searchParams.get('include_tools') === 'true';
+  const tailParam = url.searchParams.get('tail');
+  const tail = tailParam ? parseInt(tailParam, 10) : undefined;
+
+  const projects = getProjectDirs().filter(
+    (p) => !project || p.name.toLowerCase().includes(project.toLowerCase()),
+  );
+  for (const proj of projects) {
+    const sessions = getSessionFiles(proj.path);
+    const match = sessions.find((s) => s.id === sessionId);
+    if (match) {
+      const entries = parseSessionFile(match.file);
+      let messages = extractMessages(entries);
+      if (!includeTools)
+        messages = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
+      if (tail && tail > 0) messages = messages.slice(-tail);
+      json(res, { meta: getSessionMeta(entries), messages });
       return;
     }
-
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'Access-Control-Allow-Origin': '*',
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
-        "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net",
-        "connect-src 'self' ws: wss:",
-        "img-src 'self' data:",
-      ].join('; '),
-    });
-    res.end(data);
-  });
-}
-
-async function handleApi(pathname: string, url: URL, res: http.ServerResponse): Promise<boolean> {
-  const config = getConfig();
-  const memoryDir = config.memoryDir;
-
-  try {
-    if (pathname === '/health') {
-      const entries = listEntries(memoryDir);
-      jsonResponse(res, {
-        status: 'ok',
-        version: VERSION,
-        uptime: process.uptime(),
-        knowledge_entries: entries.length,
-      });
-      return true;
-    }
-
-    if (pathname === '/api/index-status') {
-      try {
-        const store = new VectorStore();
-        const stats = store.stats();
-        jsonResponse(res, stats);
-      } catch (err) {
-        console.error('[knowledge] index-status:', err instanceof Error ? err.message : err);
-        jsonResponse(res, {
-          totalEntries: 0,
-          knowledgeEntries: 0,
-          sessionEntries: 0,
-          uniqueSessions: 0,
-          dbSizeMB: 0,
-          provider: null,
-          dimensions: 0,
-        });
-      }
-      return true;
-    }
-
-    if (pathname === '/api/knowledge/search') {
-      const q = url.searchParams.get('q') || '';
-      const category = url.searchParams.get('category') || undefined;
-      const maxResults = url.searchParams.get('max_results');
-      const results = searchKnowledge(memoryDir, q, {
-        category,
-        maxResults: maxResults ? parseInt(maxResults, 10) : undefined,
-      });
-
-      try {
-        const scoring = getEntryScoring();
-        const paths = results.map((r) => r.entry.path);
-        const scores = scoring.getScores(paths);
-        const enriched = results.map((r) => {
-          const score = scores.get(r.entry.path);
-          const decay = score?.last_accessed ? decayFactor(score.last_accessed) : 1;
-          const matMult = maturityMultiplier(score?.maturity ?? 'candidate');
-          return {
-            ...r,
-            maturity: score?.maturity ?? 'candidate',
-            access_count: score?.access_count ?? 0,
-            decay_factor: decay,
-            maturity_multiplier: matMult,
-          };
-        });
-        jsonResponse(res, enriched);
-      } catch (err) {
-        console.error('[knowledge] search enrichment:', err instanceof Error ? err.message : err);
-        jsonResponse(res, results);
-      }
-      return true;
-    }
-
-    if (pathname === '/api/knowledge/consolidate') {
-      const category = url.searchParams.get('category') || undefined;
-      const thresholdParam = url.searchParams.get('threshold');
-      const threshold = thresholdParam ? parseFloat(thresholdParam) : 0.5;
-      const report = consolidate(memoryDir, category, threshold);
-      jsonResponse(res, report);
-      return true;
-    }
-
-    if (pathname === '/api/knowledge/reflect') {
-      const category = url.searchParams.get('category') || undefined;
-      const maxParam = url.searchParams.get('max_entries');
-      const maxEntries = maxParam ? parseInt(maxParam, 10) : 20;
-      const result = reflect(memoryDir, category, maxEntries);
-      jsonResponse(res, result);
-      return true;
-    }
-
-    if (pathname === '/api/knowledge') {
-      const category = url.searchParams.get('category') || undefined;
-      const tag = url.searchParams.get('tag') || undefined;
-      const entries = listEntries(memoryDir, category, tag);
-
-      // Enrich entries with score data (maturity, access_count)
-      try {
-        const scoring = getEntryScoring();
-        const paths = entries.map((e) => e.path);
-        const scores = scoring.getScores(paths);
-        const enriched = entries.map((e) => {
-          const score = scores.get(e.path);
-          return {
-            ...e,
-            maturity: score?.maturity ?? 'candidate',
-            access_count: score?.access_count ?? 0,
-            last_accessed: score?.last_accessed ?? null,
-          };
-        });
-        jsonResponse(res, enriched);
-      } catch (err) {
-        console.error('[knowledge] entries enrichment:', err instanceof Error ? err.message : err);
-        // Fallback: return entries without score data
-        jsonResponse(res, entries);
-      }
-      return true;
-    }
-
-    // Links endpoint must be matched before the generic /api/knowledge/:path
-    const linksMatch = pathname.match(/^\/api\/knowledge\/(.+)\/links$/);
-    if (linksMatch) {
-      const entryPath = decodeURIComponent(linksMatch[1]);
-      try {
-        const graph = getKnowledgeGraph();
-        const edges = graph.links(entryPath);
-        jsonResponse(res, edges);
-      } catch (err) {
-        console.error('[knowledge] links:', err instanceof Error ? err.message : err);
-        jsonResponse(res, []);
-      }
-      return true;
-    }
-
-    if (pathname.startsWith('/api/knowledge/')) {
-      const entryPath = decodeURIComponent(pathname.slice('/api/knowledge/'.length));
-      if (entryPath) {
-        const entry = readEntry(memoryDir, entryPath);
-
-        // Enrich with score data (no recordAccess — only MCP reads count)
-        try {
-          const scoring = getEntryScoring();
-          const score = scoring.getScore(entryPath);
-          const enriched = {
-            ...entry,
-            maturity: score?.maturity ?? 'candidate',
-            access_count: score?.access_count ?? 0,
-            last_accessed: score?.last_accessed ?? null,
-            decay_factor: score?.last_accessed ? decayFactor(score.last_accessed) : 1,
-            maturity_multiplier: maturityMultiplier(score?.maturity ?? 'candidate'),
-          };
-          jsonResponse(res, enriched);
-        } catch (err) {
-          console.error('[knowledge] entry enrichment:', err instanceof Error ? err.message : err);
-          jsonResponse(res, entry);
-        }
-        return true;
-      }
-    }
-
-    if (pathname === '/api/sessions/search') {
-      const q = url.searchParams.get('q') || '';
-      const role = url.searchParams.get('role') || 'all';
-      const maxResults = url.searchParams.get('max_results');
-      const ranked = url.searchParams.get('ranked') !== 'false';
-      const project = url.searchParams.get('project') || undefined;
-      const semantic = url.searchParams.get('semantic') === 'true';
-      const results = await searchSessions(q, {
-        role: role as 'user' | 'assistant' | 'all',
-        maxResults: maxResults ? parseInt(maxResults, 10) : 20,
-        ranked,
-        semantic,
-        project,
-      });
-      jsonResponse(res, results);
-      return true;
-    }
-
-    if (pathname === '/api/sessions/recall') {
-      const scope = (url.searchParams.get('scope') || 'all') as SearchScope;
-      const q = url.searchParams.get('q') || '';
-      const maxResults = url.searchParams.get('max_results');
-      const project = url.searchParams.get('project') || undefined;
-      const results = await scopedSearch(scope, q, {
-        maxResults: maxResults ? parseInt(maxResults, 10) : 20,
-        project,
-      });
-      jsonResponse(res, results);
-      return true;
-    }
-
-    if (pathname === '/api/sessions') {
-      const project = url.searchParams.get('project') || undefined;
-      const limitParam = url.searchParams.get('limit');
-      const offsetParam = url.searchParams.get('offset');
-      const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : undefined;
-      const offset = offsetParam ? parseInt(offsetParam, 10) : 0;
-      let sessions = listSessions(project);
-      if (offset > 0) sessions = sessions.slice(offset);
-      if (limit !== undefined) sessions = sessions.slice(0, limit);
-      jsonResponse(res, sessions);
-      return true;
-    }
-
-    const sessionSummaryMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/summary$/);
-    if (sessionSummaryMatch) {
-      const sessionId = decodeURIComponent(sessionSummaryMatch[1]);
-      const project = url.searchParams.get('project') || undefined;
-      const summary = getSessionSummary(sessionId, project);
-      if (!summary) {
-        errorResponse(res, `Session ${sessionId} not found`, 404);
-      } else {
-        jsonResponse(res, summary);
-      }
-      return true;
-    }
-
-    const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
-    if (sessionMatch) {
-      const sessionId = decodeURIComponent(sessionMatch[1]);
-      const project = url.searchParams.get('project') || undefined;
-      const includeTools = url.searchParams.get('include_tools') === 'true';
-      const tailParam = url.searchParams.get('tail');
-      const tail = tailParam ? parseInt(tailParam, 10) : undefined;
-
-      const projects = getProjectDirs().filter(
-        (p) => !project || p.name.toLowerCase().includes(project.toLowerCase()),
-      );
-
-      for (const proj of projects) {
-        const sessions = getSessionFiles(proj.path);
-        const match = sessions.find((s) => s.id === sessionId);
-        if (match) {
-          const entries = parseSessionFile(match.file);
-          let messages = extractMessages(entries);
-          if (!includeTools) {
-            messages = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
-          }
-          if (tail && tail > 0) {
-            messages = messages.slice(-tail);
-          }
-          const meta = getSessionMeta(entries);
-          jsonResponse(res, { meta, messages });
-          return true;
-        }
-      }
-
-      errorResponse(res, `Session ${sessionId} not found`, 404);
-      return true;
-    }
-
-    return false;
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal server error';
-    errorResponse(res, message, 500);
-    return true;
   }
-}
+  json(res, { error: `Session ${sessionId} not found` }, 404);
+};
 
-interface ExtWebSocket extends WebSocket {
-  isAlive?: boolean;
-}
-
-const wsClients: Set<ExtWebSocket> = new Set();
-
-function wsBroadcast(data: unknown): void {
-  const payload = JSON.stringify(data);
-  for (const client of wsClients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
-    }
-  }
-}
-
-// State snapshot cache — avoid rescanning disk + querying 544MB vector DB on every WS connect
-let _stateCache: { data: object; timestamp: number } | null = null;
-const STATE_CACHE_TTL = 30_000; // 30 seconds
-
-async function buildStateSnapshot(): Promise<object> {
-  const now = Date.now();
-  if (_stateCache && now - _stateCache.timestamp < STATE_CACHE_TTL) {
-    return _stateCache.data;
-  }
-
-  const config = getConfig();
-  try {
-    const knowledge = listEntries(config.memoryDir);
-    const projects = getProjectDirs();
-    let sessionCount = 0;
-    for (const proj of projects) {
-      sessionCount += getSessionFiles(proj.path).length;
-    }
-
-    // Vector count is expensive (544MB DB) — only fetch it if cache is empty
-    let vectorCount = _stateCache
-      ? (((_stateCache.data as Record<string, unknown>).stats as Record<string, number>)
-          ?.vector_count ?? 0)
-      : 0;
-    if (!_stateCache) {
-      try {
-        const store = new VectorStore();
-        vectorCount = store.stats().totalEntries;
-      } catch (err) {
-        console.error('[knowledge] vector store stats:', err instanceof Error ? err.message : err);
-      }
-    }
-
-    const data = {
-      type: 'state',
-      knowledge: knowledge || [],
-      stats: {
-        knowledge_entries: knowledge.length,
-        session_count: sessionCount,
-        vector_count: vectorCount,
-        uptime: process.uptime(),
-        version: VERSION,
-      },
-    };
-
-    _stateCache = { data, timestamp: now };
-    return data;
-  } catch (err) {
-    console.error('[knowledge] state snapshot:', err instanceof Error ? err.message : err);
-    return {
-      type: 'state',
-      knowledge: [],
-      stats: {
-        knowledge_entries: 0,
-        session_count: 0,
-        vector_count: 0,
-        uptime: process.uptime(),
-        version: VERSION,
-      },
-    };
-  }
-}
-
-// Invalidate state cache on knowledge writes
-export function invalidateStateCache(): void {
-  _stateCache = null;
-}
-
-export async function notifyUpdate(): Promise<void> {
-  if (wsClients.size === 0) return;
-  invalidateStateCache(); // Force refresh on next snapshot
-  const state = await buildStateSnapshot();
-  wsBroadcast(state);
-}
+// ── Server bootstrap ─────────────────────────────────────────────────────────
 
 export function startDashboard(port?: number): Promise<http.Server> {
   const listenPort = port ?? DEFAULT_PORT;
   const uiDir = resolveUiDir();
 
+  const router = createRouter({ staticDir: uiDir });
+  router.route('GET', '/health', healthRoute);
+  router.route('GET', '/api/index-status', indexStatusRoute);
+  router.route('GET', '/api/knowledge/search', knowledgeSearchRoute);
+  router.route('GET', '/api/knowledge/consolidate', consolidateRoute);
+  router.route('GET', '/api/knowledge/reflect', reflectRoute);
+  router.route('GET', '/api/knowledge', knowledgeListRoute);
+  router.route('GET', '/api/knowledge/:entryPath/links', knowledgeLinksRoute);
+  router.route('GET', '/api/knowledge/:entryPath', knowledgeEntryRoute);
+  router.route('GET', '/api/sessions/search', sessionsSearchRoute);
+  router.route('GET', '/api/sessions/recall', sessionsRecallRoute);
+  router.route('GET', '/api/sessions', sessionsListRoute);
+  router.route('GET', '/api/sessions/:sessionId/summary', sessionSummaryRoute);
+  router.route('GET', '/api/sessions/:sessionId', sessionDetailRoute);
+
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
-      const reqUrl = req.url || '/';
-
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204, {
-          'Access-Control-Allow-Origin': '*',
-          'X-Content-Type-Options': 'nosniff',
-          'Access-Control-Allow-Methods': 'GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        });
-        res.end();
+      if (req.method !== 'GET' && req.method !== 'OPTIONS') {
+        json(res, { error: 'Method not allowed' }, 405);
         return;
       }
 
-      if (req.method !== 'GET') {
-        errorResponse(res, 'Method not allowed', 405);
-        return;
-      }
-
-      let url: URL;
+      let pathname: string;
       try {
-        url = new URL(reqUrl, `http://${req.headers.host || 'localhost'}`);
+        pathname = new URL(req.url ?? '/', `http://${req.headers.host || 'localhost'}`).pathname;
       } catch {
-        errorResponse(res, 'Bad request', 400);
+        json(res, { error: 'Bad request' }, 400);
         return;
       }
 
-      const pathname = url.pathname;
+      if (rateLimit(req, res, pathname)) return;
 
-      // Rate limiting for API endpoints
-      if (pathname.startsWith('/api/')) {
-        const ip = getClientIp(req);
-
-        // General rate limit
-        const general = checkRateLimit(rateBuckets, ip, RATE_LIMIT_MAX);
-        if (!general.allowed) {
-          res.writeHead(429, {
-            'Content-Type': 'application/json',
-            'Retry-After': String(Math.ceil((general.resetAt - Date.now()) / 1000)),
-            'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
-            'X-RateLimit-Remaining': '0',
-          });
-          res.end(JSON.stringify({ error: 'Too many requests' }));
-          return;
-        }
-
-        // Stricter limit for heavy endpoints
-        if (HEAVY_ENDPOINTS.has(pathname)) {
-          const heavy = checkRateLimit(rateBucketsHeavy, ip, RATE_LIMIT_MAX_HEAVY);
-          if (!heavy.allowed) {
-            res.writeHead(429, {
-              'Content-Type': 'application/json',
-              'Retry-After': String(Math.ceil((heavy.resetAt - Date.now()) / 1000)),
-              'X-RateLimit-Limit': String(RATE_LIMIT_MAX_HEAVY),
-              'X-RateLimit-Remaining': '0',
-            });
-            res.end(JSON.stringify({ error: 'Too many requests (rate limit for search/analyze)' }));
-            return;
-          }
-        }
-      }
-
-      if (pathname.startsWith('/api/') || pathname === '/health') {
-        const handled = await handleApi(pathname, url, res);
-        if (handled) return;
-      }
-
-      if (!pathname.startsWith('/api/')) {
-        serveStatic(uiDir, pathname, res);
-        return;
-      }
-
-      errorResponse(res, 'Not found', 404);
+      await router.handle(req, res);
     });
 
-    const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_MESSAGE_SIZE });
-
-    server.on('upgrade', (request, socket, head) => {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-      });
+    setupWebSocket({
+      httpServer: server,
+      getFingerprints: () => {
+        const s = buildSnapshot();
+        return { v: `${s.builtAt}:${s.knowledge.length}:${s.sessionCount}` };
+      },
+      getCategoryData: () => fullState(),
+      getFullState: () => fullState(),
+      pollIntervalMs: 5_000,
     });
 
-    wss.on('connection', async (ws: ExtWebSocket) => {
-      if (wsClients.size >= MAX_WS_CONNECTIONS) {
-        ws.close(1013, 'Too many connections');
-        return;
-      }
-      ws.isAlive = true;
-      wsClients.add(ws);
-
-      ws.on('pong', () => {
-        ws.isAlive = true;
-      });
-      ws.on('close', () => {
-        wsClients.delete(ws);
-      });
-      ws.on('error', () => {
-        wsClients.delete(ws);
-      });
-
-      try {
-        const state = await buildStateSnapshot();
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(state));
-        }
-      } catch (err) {
-        console.error('[knowledge] ws init:', err instanceof Error ? err.message : err);
-      }
-    });
-
-    const heartbeat = setInterval(() => {
-      for (const ws of wsClients) {
-        if (ws.isAlive === false) {
-          wsClients.delete(ws);
-          ws.terminate();
-          continue;
-        }
-        ws.isAlive = false;
-        ws.ping();
-      }
-    }, HEARTBEAT_INTERVAL);
-
-    // ── File Watcher (live reload) ──────────────────────────────────────
-    let reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+    // ── File watcher (UI live reload via fs.watch) ─────────────────────────
     let fileWatcher: fs.FSWatcher | null = null;
-
-    function broadcastReload(): void {
-      if (reloadDebounce) clearTimeout(reloadDebounce);
-      reloadDebounce = setTimeout(() => {
-        wsBroadcast({ type: 'reload' });
-      }, 200);
-    }
-
     try {
       if (fs.existsSync(uiDir)) {
-        fileWatcher = fs.watch(uiDir, { recursive: true }, (eventType, filename) => {
-          if (filename && /\.(html|css|js)$/.test(filename)) {
-            broadcastReload();
-          }
+        fileWatcher = fs.watch(uiDir, { recursive: true }, () => {
+          // Best-effort: clients pick up changes on the next WS poll cycle.
         });
       }
     } catch (err) {
@@ -703,21 +463,16 @@ export function startDashboard(port?: number): Promise<http.Server> {
     }
 
     server.on('close', () => {
-      clearInterval(heartbeat);
       if (fileWatcher) fileWatcher.close();
-      wss.close();
     });
 
     server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        reject(new Error(`Port ${listenPort} already in use`));
-      } else {
-        reject(err);
-      }
+      if (err.code === 'EADDRINUSE') reject(new Error(`Port ${listenPort} already in use`));
+      else reject(err);
     });
 
-    server.listen(listenPort, () => {
-      resolve(server);
-    });
+    server.listen(listenPort, () => resolve(server));
   });
 }
+
+export { serveStatic };
