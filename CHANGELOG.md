@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.25 (2026-04-08)
+
+### Documentation
+
+- Self-documenting release: documents this version + retroactively records the 1.3.24 release whose payload was the 1.3.18 – 1.3.23 backfill.
+
 ## 1.3.23 (2026-04-08)
 
 ### Fixed
