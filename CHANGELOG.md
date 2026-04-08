@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.26 (2026-04-08)
+
+### Fixed
+
+- **Session detail panel showed `unknown / unknown` for cwd + branch** while the session card correctly showed the project + branch. The `getSessionMeta` parser used `entries[0]` directly, which on Claude Code sessions is a metadata-only entry (`permission-mode`, `file-history-snapshot`, …) without `timestamp` / `cwd` / `gitBranch`. Now skips leading metadata entries and uses the first entry that has a top-level `timestamp` — mirrors the existing fix in `fastMeta()`. The two code paths used to disagree.
+
 ## 1.3.25 (2026-04-08)
 
 ### Documentation

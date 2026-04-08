@@ -153,8 +153,16 @@ export function getSessionMeta(entries: SessionEntry[]): SessionMeta {
     };
   }
 
-  const first = entries[0];
-  const last = entries[entries.length - 1];
+  // Skip leading metadata-only entries (permission-mode, file-history-snapshot,
+  // summary, etc.) which lack a top-level timestamp / cwd / gitBranch. The
+  // first entry with a timestamp is the real session start. Mirrors the same
+  // fix in fastMeta() — the two code paths used to disagree, leaving the
+  // session detail panel showing "unknown / unknown" while the card showed
+  // the correct project + branch.
+  const firstWithTimestamp = entries.find((e) => e.timestamp);
+  const lastWithTimestamp = [...entries].reverse().find((e) => e.timestamp);
+  const first = firstWithTimestamp ?? entries[0];
+  const last = lastWithTimestamp ?? entries[entries.length - 1];
   const userMessages = entries.filter((e) => (e.type ?? e.role) === 'user');
   const firstUserMsg = userMessages[0]?.message?.content;
 
