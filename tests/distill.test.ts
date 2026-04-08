@@ -66,11 +66,11 @@ function makeSession(
 
 describe('normalizeProjectName', () => {
   it('strips Windows user prefix', () => {
-    expect(normalizeProjectName('C--Users-Mathias-odoo19-odoo')).toBe('odoo19');
+    expect(normalizeProjectName('C--Users-Alice-myproj19-myproj')).toBe('myproj19');
   });
 
   it('strips double-dash user prefix', () => {
-    expect(normalizeProjectName('C--Users-Mathias--claude-mcp-servers-agent-comm')).toBe(
+    expect(normalizeProjectName('C--Users-Alice--claude-mcp-servers-agent-comm')).toBe(
       'agent-comm',
     );
   });
@@ -78,40 +78,40 @@ describe('normalizeProjectName', () => {
   it('merges worktree into parent project', () => {
     expect(
       normalizeProjectName(
-        'C--Users-Mathias--claude-mcp-servers-agent-comm--worktrees-review-security',
+        'C--Users-Alice--claude-mcp-servers-agent-comm--worktrees-review-security',
       ),
     ).toBe('agent-comm');
   });
 
-  it('merges claude-worktrees into parent project', () => {
-    expect(
-      normalizeProjectName('C--Users-Mathias-odoo19-odoo--claude-worktrees-practical-kilby'),
-    ).toBe('odoo19');
+  it('merges host-prefixed worktrees into parent project', () => {
+    expect(normalizeProjectName('C--Users-Alice-myproj19-myproj--claude-worktrees-feature-x')).toBe(
+      'myproj19',
+    );
   });
 
   it('merges swarm sessions into parent project', () => {
-    expect(normalizeProjectName('C--Users-Mathias--agent-comm-swarm-scale-test-3')).toBe(
+    expect(normalizeProjectName('C--Users-Alice--agent-comm-swarm-scale-test-3')).toBe(
       'agent-comm',
     );
-    expect(normalizeProjectName('C--Users-Mathias--agent-comm-swarm-comm-agent-1')).toBe(
+    expect(normalizeProjectName('C--Users-Alice--agent-comm-swarm-comm-agent-1')).toBe(
       'agent-comm',
     );
-    expect(normalizeProjectName('C--Users-Mathias--agent-comm-swarm-ui-fixer')).toBe('agent-comm');
+    expect(normalizeProjectName('C--Users-Alice--agent-comm-swarm-ui-fixer')).toBe('agent-comm');
   });
 
-  it('maps ~/.claude to claude-code-config', () => {
-    expect(normalizeProjectName('C--Users-Mathias--claude')).toBe('claude-code-config');
+  it('maps a bare host config dir to a stable label', () => {
+    expect(normalizeProjectName('C--Users-Alice--claude')).toBe('claude-code-config');
   });
 
-  it('strips claude- prefix for subprojects', () => {
-    expect(normalizeProjectName('C--Users-Mathias--claude-channels')).toBe('channels');
-    expect(normalizeProjectName('C--Users-Mathias--claude-downloads')).toBe('downloads');
+  it('strips host-name prefix for subprojects', () => {
+    expect(normalizeProjectName('C--Users-Alice--claude-channels')).toBe('channels');
+    expect(normalizeProjectName('C--Users-Alice--claude-downloads')).toBe('downloads');
   });
 
-  it('handles complex odoo paths', () => {
+  it('collapses duplicated trailing project segment', () => {
     expect(
-      normalizeProjectName('C--Users-Mathias-odoo16-env-odoo-customers-etron-onretail-odoo'),
-    ).toBe('odoo16');
+      normalizeProjectName('C--Users-Alice-myproj16-env-myproj-customers-etron-onretail-myproj'),
+    ).toBe('myproj16');
   });
 });
 

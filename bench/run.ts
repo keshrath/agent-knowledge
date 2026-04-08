@@ -28,10 +28,16 @@ interface Fixture {
   category: string;
 }
 
-const fixturesPath = path.resolve(__dirname, 'fixtures.jsonl');
+let fixturesPath = path.resolve(__dirname, 'fixtures.jsonl');
 if (!fs.existsSync(fixturesPath)) {
-  console.error(`fixtures.jsonl not found at ${fixturesPath}`);
-  process.exit(1);
+  const examplePath = path.resolve(__dirname, 'fixtures.example.jsonl');
+  if (fs.existsSync(examplePath)) {
+    console.error(`fixtures.jsonl not found — falling back to fixtures.example.jsonl`);
+    fixturesPath = examplePath;
+  } else {
+    console.error(`fixtures.jsonl not found at ${fixturesPath}`);
+    process.exit(1);
+  }
 }
 
 const fixtures: Fixture[] = fs

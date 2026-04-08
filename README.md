@@ -4,8 +4,11 @@
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
 [![Tests: 390 passing](https://img.shields.io/badge/Tests-390%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
+[![LongMemEval R@5: 83.8%](https://img.shields.io/badge/LongMemEval%20R%405-83.8%25-brightgreen.svg)]()
 
 **Cross-session memory and recall for AI coding assistants** -- works with Claude Code, Cursor, OpenCode, Cline, Continue.dev, and Aider out of the box. Git-synced knowledge base, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing.
+
+**Benchmark:** **R@5 = 83.8%** on the public LongMemEval academic benchmark (Wu et al. 2024, ICLR 2025), full 500 questions, no LLM, no API key, runs entirely offline. R@10 = 91.2%. Full per-category table and reproduction instructions in [`bench/README.md`](bench/README.md).
 
 <table>
 <tr>

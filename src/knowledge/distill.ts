@@ -158,17 +158,10 @@ function isSafeContent(text: string): boolean {
  * Normalize a project directory name to a clean, readable
  * project name suitable for the knowledge base.
  *
- * Input examples:
- *   "C--Users-Mathias--claude-mcp-servers-agent-comm--worktrees-review-security"
- *   "C--Users-Mathias-odoo19-odoo"
- *   "C--Users-Mathias--agent-comm-swarm-scale-test-3"
- *   "C--Users-Mathias--claude"
- *
- * Output:
- *   "agent-comm" (worktree merged with parent)
- *   "odoo19" (Windows path cleaned)
- *   "agent-comm" (swarm merged with parent)
- *   "claude-code-config" (special case for ~/.claude)
+ * Session directories are typically encoded paths from a host (Claude Code,
+ * Cursor, etc.) — e.g. `C--Users-Alice--repos-myapp--worktrees-feature-x`.
+ * This collapses host prefixes, worktree suffixes, and duplicated trailing
+ * segments into a clean project name.
  */
 export function normalizeProjectName(raw: string): string {
   let name = raw;
@@ -180,26 +173,26 @@ export function normalizeProjectName(raw: string): string {
   name = name.replace(/^\./, '');
 
   // Handle worktrees: <project>--worktrees-<name> → <project>
-  // Also: <project>--claude-worktrees-<name> → <project>
-  name = name.replace(/--(?:claude-)?worktrees-[a-z0-9-]+$/i, '');
+  name = name.replace(/--(?:[a-z0-9-]+-)?worktrees-[a-z0-9-]+$/i, '');
 
-  // Handle swarm sessions: <project>-swarm-<role>-<n> → <project>
+  // Handle swarm/fan-out sessions: <project>-swarm-<role>-<n> → <project>
   name = name.replace(/-swarm-[a-z]+-(?:agent|review|scale-test|test|ui)-?\d*$/i, '');
   name = name.replace(/-swarm-[a-z0-9-]+$/i, '');
 
-  // Known path-to-name mappings for common patterns
+  // Generic path-to-name mappings
   const pathMappings: Array<[RegExp, string]> = [
-    // ~/.claude itself
+    // Bare host config dir (e.g. `claude` → `claude-code-config`)
     [/^claude$/, 'claude-code-config'],
-    // MCP servers under ~/.claude
-    [/^claude-mcp-servers-(.+)$/, '$1'],
-    // Claude subprojects
+    // MCP servers under a host config dir
+    [/^[a-z0-9]+-mcp-servers-(.+)$/, '$1'],
+    // Strip a host-name prefix repeated as a leading segment
     [/^claude-(.+)$/, '$1'],
-    // Odoo paths: odoo19-odoo → odoo19, odoo16-env-odoo-customers-etron-onretail-odoo → onretail-odoo
-    [/^odoo(\d+)-.*?-odoo$/, 'odoo$1'],
-    [/^odoo(\d+)-odoo$/, 'odoo$1'],
-    // Generic: strip trailing -odoo suffix duplicate
-    [/^(.+?)-odoo-odoo$/, '$1-odoo'],
+    // Collapse `<stem><version>-...-<stem>` → `<stem><version>` (e.g.
+    // `proj19-sub-proj` → `proj19`). The stem appears versioned at the
+    // start and bare at the end with arbitrary middle segments in between.
+    [/^([a-z]+)(\d+)-(?:.*-)?\1$/i, '$1$2'],
+    // Strip a duplicated trailing word: `<a>-<b>-<b>` → `<a>-<b>`
+    [/^(.+?)-([a-z0-9]+)-\2$/i, '$1-$2'],
   ];
 
   for (const [pattern, replacement] of pathMappings) {

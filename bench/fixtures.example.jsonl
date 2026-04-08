@@ -1,0 +1,5 @@
+{"query":"how do I set up the database","expected":"workflows/db-setup.md","category":"factual-lookup"}
+{"query":"what's the deployment process","expected":"workflows/deploy.md","category":"multi-hop"}
+{"query":"who owns the auth service","expected":"people/owner.md","category":"preference"}
+{"query":"what did we decide about caching","expected":"decisions/cache-strategy.md","category":"factual-lookup"}
+{"query":"the architecture overview","expected":"projects/main.md","category":"factual-lookup"}

@@ -20,9 +20,9 @@
  *               Default alpha=0.3 (matches getConfig().embeddingAlpha).
  *
  * Usage:
- *   # one-time: download the dataset (~265 MB)
- *   curl -L -o ~/.claude/tmp/longmemeval/longmemeval_s.json \
- *     https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s
+ *   # one-time: download the dataset (~264 MB)
+ *   curl -L -o ~/.claude/tmp/longmemeval/longmemeval_s_cleaned.json \
+ *     https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
  *
  *   # run
  *   npx tsx bench/longmemeval.ts                # raw
@@ -72,13 +72,13 @@ const limit = limitArg
 
 const datasetPath =
   process.env.LONGMEMEVAL_PATH ??
-  path.join(homedir(), '.claude', 'tmp', 'longmemeval', 'longmemeval_s.json');
+  path.join(homedir(), '.claude', 'tmp', 'longmemeval', 'longmemeval_s_cleaned.json');
 
 if (!fs.existsSync(datasetPath)) {
   console.error(`LongMemEval dataset not found at ${datasetPath}`);
   console.error('Download with:');
   console.error(
-    '  curl -L -o ~/.claude/tmp/longmemeval/longmemeval_s.json \\\n    https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s',
+    '  curl -L -o ~/.claude/tmp/longmemeval/longmemeval_s_cleaned.json \\\n    https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json',
   );
   process.exit(1);
 }

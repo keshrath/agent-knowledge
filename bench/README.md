@@ -28,19 +28,15 @@ Append one JSON line to `bench/fixtures.jsonl`:
 
 ```jsonl
 {
-  "query": "how do we deploy lastloop",
-  "expected": "workflows/lastloop-cicd-deployment-sop.md",
+  "query": "how do I configure the database connection",
+  "expected": "workflows/db-setup.md",
   "category": "multi-hop"
 }
 ```
 
 Suggested categories: `factual-lookup`, `multi-hop`, `temporal`, `preference`, `adversarial`.
 
-## Why this exists
-
-Without a measurable benchmark, every change to scoring/boost/category logic in `agent-knowledge` is vibes-based. With it, you can A/B any change in seconds and see exactly which question categories a tweak moves.
-
-The fixture is small (~22 entries) on purpose — large enough to surface regressions, small enough to hand-author and edit.
+`bench/fixtures.jsonl` is gitignored — author your own fixtures against your own `~/agent-knowledge/` content. A small example file is checked in as `bench/fixtures.example.jsonl`.
 
 ---
 
@@ -50,12 +46,12 @@ The fixture is small (~22 entries) on purpose — large enough to surface regres
 
 ### Setup
 
-Download the dataset (~265 MB, one time):
+Download the dataset (~264 MB, one time):
 
 ```bash
 mkdir -p ~/.claude/tmp/longmemeval
-curl -L -o ~/.claude/tmp/longmemeval/longmemeval_s.json \
-  https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s
+curl -L -o ~/.claude/tmp/longmemeval/longmemeval_s_cleaned.json \
+  https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
 ```
 
 Override the path with `LONGMEMEVAL_PATH` if you store it elsewhere.
@@ -81,26 +77,34 @@ npx tsx bench/longmemeval.ts --hybrid --boosts --limit 50
 
 Per-question type breakdown is printed alongside the overall score so you can see exactly which categories a change moves.
 
-### Reproducible results — agent-knowledge v1.4.0
+### Reproducible results — agent-knowledge v1.4.2
 
-No LLM, no API key, runs entirely offline.
+Full 500 questions on `longmemeval_s_cleaned`, no LLM, no API key, runs entirely offline.
+Reproduce with `npx tsx bench/longmemeval.ts` (raw) or `--boosts` for the v1.4 scoring boosts.
 
-| Mode                           | n   | R@1   | R@5       | R@10      |
-| ------------------------------ | --- | ----- | --------- | --------- |
-| Raw TF-IDF (sparse only)       | 500 | 54.0% | 81.6%     | 89.2%     |
-| TF-IDF + v1.4 boosts           | 500 | 60.0% | 83.6%     | 91.2%     |
-| Hybrid (TF-IDF + sem + boosts) | 100 | 77.0% | **96.0%** | **97.0%** |
+| Mode                     | n   | R@1   | R@5       | R@10      | Time |
+| ------------------------ | --- | ----- | --------- | --------- | ---- |
+| Raw TF-IDF (sparse only) | 500 | 54.0% | 81.8%     | 89.2%     | 8.6s |
+| TF-IDF + boosts          | 500 | 59.8% | **83.8%** | **91.2%** | 9.3s |
 
-Notes:
+#### Per-question-type breakdown (boosts mode)
 
-- The hybrid number is on the first 100 questions, which cover only `single-session-user` (70) and `multi-session` (30). On those two categories specifically, hybrid lifts R@5 from 90.0% / 84.2% (boosts mode) to **95.7% / 96.7%**. The full 500-question hybrid run takes ~110 minutes on a single machine and is left as a regression run.
-- The TF-IDF + boosts numbers are on the full 500-question dataset.
+| Category                  | n   | R@1   | R@5   | R@10  |
+| ------------------------- | --- | ----- | ----- | ----- |
+| single-session-user       | 70  | 62.9% | 90.0% | 92.9% |
+| single-session-assistant  | 56  | 76.8% | 87.5% | 94.6% |
+| single-session-preference | 30  | 10.0% | 33.3% | 50.0% |
+| multi-session             | 133 | 58.6% | 84.2% | 92.5% |
+| temporal-reasoning        | 133 | 59.4% | 84.2% | 93.2% |
+| knowledge-update          | 78  | 66.7% | 93.6% | 97.4% |
 
-The v1.4 boosts add the biggest lift exactly where they target:
+The boosts add the biggest lift exactly where they target:
 
 - **single-session-assistant R@1: +16.1pp** (proper-noun boost)
-- **temporal-reasoning R@1: +7.6pp** (temporal-proximity boost)
+- **temporal-reasoning R@1: +6.8pp** (temporal-proximity boost)
 - **knowledge-update R@5: +1.3pp**
+
+The dead spot is **single-session-preference** (33.3% R@5). Preferences are stated indirectly ("I usually prefer X") and TF-IDF can't bridge the vocabulary gap. The hybrid mode (`--hybrid --boosts`) adds local MiniLM semantic search and lifts categories where TF-IDF struggles, at the cost of ~110 minutes for the full 500-question run.
 
 ### Notes
 

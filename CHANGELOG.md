@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.2 (2026-04-08)
+
+### Added
+
+- **LongMemEval R@5 = 83.8% headline** in the main README, with a per-question-type breakdown in `bench/README.md`. Reproducible via `npx tsx bench/longmemeval.ts --boosts` on the public Wu et al. 2024 (ICLR 2025) `longmemeval_s_cleaned` dataset, full 500 questions, no LLM, no API key.
+- `bench/fixtures.example.jsonl` — generic example fixture template; the personal `bench/fixtures.jsonl` is now gitignored so users author their own.
+- Bench falls back to `fixtures.example.jsonl` automatically if no personal fixtures file is present.
+
+### Changed
+
+- `normalizeProjectName` in `src/knowledge/distill.ts` is now generic. The previous implementation had specific regex patterns for one project ecosystem; the new pattern collapses any `<stem><version>-...-<stem>` shape via a single rule.
+- `bench/longmemeval.ts` now defaults to the cleaned LongMemEval dataset (`longmemeval_s_cleaned.json`) instead of the deprecated original.
+
 ## 1.4.1 (2026-04-08)
 
 Documentation cleanup. No code or behavior changes vs 1.4.0.

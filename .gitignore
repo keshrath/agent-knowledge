@@ -23,3 +23,6 @@ playwright-report/
 # --- OS / editor cruft -------------------------------------------------------
 .DS_Store
 Thumbs.db
+
+# --- Local benchmark fixtures (author your own; example is checked in) ------
+bench/fixtures.jsonl
