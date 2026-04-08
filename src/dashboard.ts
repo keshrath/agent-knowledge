@@ -9,7 +9,14 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { createRouter, json, serveStatic, setupWebSocket, type RouteHandler } from 'agent-common';
+import {
+  createRouter,
+  createRateLimiter,
+  json,
+  serveStatic,
+  setupWebSocket,
+  type RouteHandler,
+} from 'agent-common';
 import { listEntries, readEntry } from './knowledge/store.js';
 import { searchKnowledge } from './knowledge/search.js';
 import { getEntryScoring, decayFactor, maturityMultiplier } from './knowledge/scoring.js';
@@ -33,28 +40,17 @@ import { getVersion } from './version.js';
 const VERSION = getVersion();
 const DEFAULT_PORT = 3423;
 
-// ── Per-endpoint rate limiter (knowledge-specific: heavy bucket for embeddings) ─
-// Kept local rather than generalized into agent-common because the
-// "heavy endpoints" concept is unique to this server's embedding workload.
+// ── Per-endpoint rate limiter ────────────────────────────────────────────────
+// Default bucket for all /api/ requests, plus a stricter "heavy" bucket for
+// embedding-backed endpoints. Both buckets share one rateLimiter instance
+// from agent-common.
 
-const RATE_LIMIT_WINDOW = 60_000;
-const RATE_LIMIT_MAX = 100;
-const RATE_LIMIT_MAX_HEAVY = 20;
-
-interface RateBucket {
-  count: number;
-  resetAt: number;
-}
-
-const rateBuckets = new Map<string, RateBucket>();
-const rateBucketsHeavy = new Map<string, RateBucket>();
-
-const cleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, b] of rateBuckets) if (b.resetAt <= now) rateBuckets.delete(key);
-  for (const [key, b] of rateBucketsHeavy) if (b.resetAt <= now) rateBucketsHeavy.delete(key);
-}, 300_000);
-cleanupTimer.unref();
+const rateLimiter = createRateLimiter({
+  windows: {
+    default: { max: 100, windowMs: 60_000 },
+    heavy: { max: 20, windowMs: 60_000 },
+  },
+});
 
 const HEAVY_ENDPOINTS = new Set([
   '/api/knowledge/search',
@@ -64,48 +60,26 @@ const HEAVY_ENDPOINTS = new Set([
   '/api/sessions/recall',
 ]);
 
-function getClientIp(req: http.IncomingMessage): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
-  return req.socket.remoteAddress ?? 'unknown';
-}
-
-function checkBucket(
-  bucket: Map<string, RateBucket>,
-  ip: string,
-  max: number,
-): { allowed: boolean; resetAt: number } {
-  const now = Date.now();
-  let b = bucket.get(ip);
-  if (!b || b.resetAt <= now) {
-    b = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
-    bucket.set(ip, b);
-  }
-  b.count++;
-  return { allowed: b.count <= max, resetAt: b.resetAt };
-}
-
 function rateLimit(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): boolean {
   if (!pathname.startsWith('/api/')) return false;
-  const ip = getClientIp(req);
-  const general = checkBucket(rateBuckets, ip, RATE_LIMIT_MAX);
+  const general = rateLimiter.check(req);
   if (!general.allowed) {
     res.writeHead(429, {
       'Content-Type': 'application/json',
       'Retry-After': String(Math.ceil((general.resetAt - Date.now()) / 1000)),
-      'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
+      'X-RateLimit-Limit': String(general.limit),
       'X-RateLimit-Remaining': '0',
     });
     res.end(JSON.stringify({ error: 'Too many requests' }));
     return true;
   }
   if (HEAVY_ENDPOINTS.has(pathname)) {
-    const heavy = checkBucket(rateBucketsHeavy, ip, RATE_LIMIT_MAX_HEAVY);
+    const heavy = rateLimiter.check(req, 'heavy');
     if (!heavy.allowed) {
       res.writeHead(429, {
         'Content-Type': 'application/json',
         'Retry-After': String(Math.ceil((heavy.resetAt - Date.now()) / 1000)),
-        'X-RateLimit-Limit': String(RATE_LIMIT_MAX_HEAVY),
+        'X-RateLimit-Limit': String(heavy.limit),
         'X-RateLimit-Remaining': '0',
       });
       res.end(JSON.stringify({ error: 'Too many requests (rate limit for search/analyze)' }));
