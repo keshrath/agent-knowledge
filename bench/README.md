@@ -77,34 +77,69 @@ npx tsx bench/longmemeval.ts --hybrid --boosts --limit 50
 
 Per-question type breakdown is printed alongside the overall score so you can see exactly which categories a change moves.
 
-### Reproducible results — agent-knowledge v1.4.2
+### Reproducible results — agent-knowledge v1.5.1
 
-Full 500 questions on `longmemeval_s_cleaned`, no LLM, no API key, runs entirely offline.
-Reproduce with `npx tsx bench/longmemeval.ts` (raw) or `--boosts` for the v1.4 scoring boosts.
+Full 500 questions, no LLM, no API key, runs entirely offline. Reproduce with `npx tsx bench/longmemeval.ts --boosts --ranker bm25` (sparse) or `--hybrid --boosts --ranker bm25` (hybrid).
 
-| Mode                     | n   | R@1   | R@5       | R@10      | Time |
-| ------------------------ | --- | ----- | --------- | --------- | ---- |
-| Raw TF-IDF (sparse only) | 500 | 54.0% | 81.8%     | 89.2%     | 8.6s |
-| TF-IDF + boosts          | 500 | 59.8% | **83.8%** | **91.2%** | 9.3s |
+#### Headline (longmemeval_s_cleaned, 54 distractor sessions per question)
 
-#### Per-question-type breakdown (boosts mode)
+| Mode                             | n   | R@1       | R@5       | R@10      | Time   |
+| -------------------------------- | --- | --------- | --------- | --------- | ------ |
+| 1.4.2 — TF-IDF + boosts          | 500 | 59.8%     | 83.8%     | 91.2%     | 9.3s   |
+| **1.5 — BM25 + boosts**          | 500 | **87.6%** | **97.2%** | **98.4%** | 8.3s   |
+| **1.5 — BM25 + semantic hybrid** | 500 | **89.6%** | **98.8%** | **99.6%** | ~70min |
 
-| Category                  | n   | R@1   | R@5   | R@10  |
-| ------------------------- | --- | ----- | ----- | ----- |
-| single-session-user       | 70  | 62.9% | 90.0% | 92.9% |
-| single-session-assistant  | 56  | 76.8% | 87.5% | 94.6% |
-| single-session-preference | 30  | 10.0% | 33.3% | 50.0% |
-| multi-session             | 133 | 58.6% | 84.2% | 92.5% |
-| temporal-reasoning        | 133 | 59.4% | 84.2% | 93.2% |
-| knowledge-update          | 78  | 66.7% | 93.6% | 97.4% |
+#### Per-question-type breakdown (1.5 BM25 + boosts, longmemeval_s_cleaned)
 
-The boosts add the biggest lift exactly where they target:
+| Category                  | n   | R@1    | R@5    | R@10   |
+| ------------------------- | --- | ------ | ------ | ------ |
+| single-session-user       | 70  | 92.9%  | 100.0% | 100.0% |
+| single-session-assistant  | 56  | 100.0% | 100.0% | 100.0% |
+| single-session-preference | 30  | 43.3%  | 86.7%  | 90.0%  |
+| multi-session             | 133 | 87.2%  | 97.0%  | 98.5%  |
+| temporal-reasoning        | 133 | 83.5%  | 95.5%  | 97.7%  |
+| knowledge-update          | 78  | 98.7%  | 100.0% | 100.0% |
 
-- **single-session-assistant R@1: +16.1pp** (proper-noun boost)
-- **temporal-reasoning R@1: +6.8pp** (temporal-proximity boost)
-- **knowledge-update R@5: +1.3pp**
+#### Harder split — longmemeval_m (500 distractor sessions per question, ~10× harder)
 
-The dead spot is **single-session-preference** (33.3% R@5). Preferences are stated indirectly ("I usually prefer X") and TF-IDF can't bridge the vocabulary gap. The hybrid mode (`--hybrid --boosts`) adds local MiniLM semantic search and lifts categories where TF-IDF struggles, at the cost of ~110 minutes for the full 500-question run.
+| Mode                             | R@1       | R@5       | R@10      | Time     |
+| -------------------------------- | --------- | --------- | --------- | -------- |
+| **1.5 — BM25 + boosts (sparse)** | **65.6%** | **86.0%** | **92.4%** | ~2.2 min |
+| **1.5 — BM25 + semantic hybrid** | **65.4%** | **88.4%** | **92.2%** | ~9.7 hr  |
+
+`_m` is the same 500 questions but with ~500 candidate sessions per question instead of ~54, so the retriever has 10× more distractors to discriminate against. The drop from `_s` is expected; the relative ordering of categories holds.
+
+### Validation against the LongMemEval paper baseline
+
+We re-ran the LongMemEval paper's official `flat-bm25` implementation (`src/retrieval/run_retrieval.py` from `xiaowu0162/longmemeval`) on the same data, using the paper's exact corpus construction (user-only text per session), tokenization (`doc.split(" ")`, no normalization), and `rank_bm25.BM25Okapi` defaults. Eval metric is the paper's own `recall_any@k` from `eval_utils.py`. Both implementations produce identical metrics on the same questions; the only difference is the BM25 setup.
+
+| Split           | Paper `flat-bm25` | agent-knowledge 1.5 BM25 | agent-knowledge 1.5 hybrid |
+| --------------- | ----------------- | ------------------------ | -------------------------- |
+| `longmemeval_s` | 88.6% R@5         | **97.2% (+8.6pp)**       | **98.8% (+10.2pp)**        |
+| `longmemeval_m` | 75.2% R@5         | **86.0% (+10.8pp)**      | **88.4% (+13.2pp)**        |
+
+Why we beat the paper's BM25 on the same algorithm:
+
+1. **We index both user and assistant turns** (the paper indexes user-only). LongMemEval queries often reference content the assistant produced; user-only loses that signal.
+2. **We lowercase + strip stopwords** (the paper splits on whitespace with no normalization). Stopword removal sharpens IDF.
+3. **`k1 = 1.2` instead of `BM25Okapi`'s default `1.5`**. Lower k1 reduces the saturation of high-TF terms, which helps when documents are long conversations.
+
+The improvement is consistent across both splits (+8.6pp on `_s`, +10.8pp on `_m`) and grows on the harder split, suggesting the wins compound rather than being an artifact of the easier setting.
+
+Reproduce the paper baseline yourself:
+
+```bash
+pip install rank_bm25 numpy
+python bench/paper_bm25_eval.py ~/.claude/tmp/longmemeval/longmemeval_s_cleaned.json
+python bench/paper_bm25_eval.py ~/.claude/tmp/longmemeval/longmemeval_m.json
+```
+
+### Caveats
+
+- **Single run, no variance bars.** The bench is deterministic for sparse-only; semantic uses a fixed quantized MiniLM with no sampling. Re-running yields the same numbers byte-for-byte.
+- **Retrieval R@5 is not QA accuracy.** Many third-party "memory system" papers report end-to-end QA correctness (retrieval × LLM judge), which is a different and not directly comparable metric. We measure retrieval only.
+- **No comparison vs the paper's dense retrievers** (Stella V5, GTE, Contriever) in their full framework. Those need a GPU plus the 1.5B Stella model. The single Table 3 cell we have (`_m`, value=round, K=V+fact, Stella V5) reports 64.4% R@5; our `_m` BM25 lands at 86.0%, but this is a single-cell comparison across different granularities and key-expansions, so we don't claim it broadly.
+- **`single-session-preference` is the only weak category** even after the BM25 swap (86.7% sparse / 93.3% hybrid on `_s`, 46.7% sparse / 56.7% hybrid on `_m`). Preferences are stated indirectly and remain a real semantic gap.
 
 ### Notes
 

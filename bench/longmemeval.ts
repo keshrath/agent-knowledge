@@ -87,12 +87,36 @@ if (!fs.existsSync(datasetPath)) {
 }
 
 console.error(`Loading ${datasetPath}...`);
-const t0 = Date.now();
-const raw = fs.readFileSync(datasetPath, 'utf-8');
-const data: Question[] = JSON.parse(raw);
-console.error(`Loaded ${data.length} questions in ${Date.now() - t0}ms`);
 
-const questions = limit > 0 ? data.slice(0, limit) : data;
+// Stream-iterate the JSON array. Node fs.readFileSync hits its ~512MB string
+// limit on the longmemeval_m split (2.6GB), and even loading the parsed array
+// fully blows the heap. So for large files we yield one question at a time and
+// process+discard inside the main loop.
+const STREAM_THRESHOLD = 384 * 1024 * 1024;
+const fileSizeBytes = fs.statSync(datasetPath).size;
+const useStreamingLoad = fileSizeBytes >= STREAM_THRESHOLD;
+
+async function* iterDataset(p: string): AsyncGenerator<Question> {
+  if (!useStreamingLoad) {
+    const raw = fs.readFileSync(p, 'utf-8');
+    const arr = JSON.parse(raw) as Question[];
+    for (const q of arr) yield q;
+    return;
+  }
+  // Note: stream-json files are kebab-case on disk despite the docs.
+  // CJS module — use createRequire so .withParserAsStream is reachable.
+  const { createRequire } = await import('module');
+  const require = createRequire(import.meta.url);
+  const streamArrayMod = require('stream-json/streamers/stream-array.js');
+  const stream = fs.createReadStream(p).pipe(streamArrayMod.withParserAsStream());
+  for await (const item of stream) {
+    yield (item as { value: Question }).value;
+  }
+}
+
+console.error(
+  `Streaming mode: ${useStreamingLoad ? 'on' : 'off'} (file ${(fileSizeBytes / 1024 / 1024).toFixed(0)} MB)`,
+);
 
 const modeName = useHybrid
   ? `hybrid (alpha=${alpha})`
@@ -101,7 +125,7 @@ const modeName = useHybrid
     : useBoosts
       ? 'raw + boosts'
       : 'raw TF-IDF';
-console.error(`Running on ${questions.length} questions in ${modeName} mode...`);
+console.error(`Running in ${modeName} mode${limit > 0 ? ` (limit ${limit})` : ''}...`);
 
 // Lazy-load embedding provider only if needed
 let _provider: Awaited<ReturnType<typeof getEmbeddingProvider>> | null = null;
@@ -179,7 +203,8 @@ let processed = 0;
 const provider = await ensureProvider();
 const semanticActive = (useSemantic || useHybrid) && provider !== null;
 
-for (const q of questions) {
+for await (const q of iterDataset(datasetPath)) {
+  if (limit > 0 && processed >= limit) break;
   if (q.haystack_sessions.length !== q.haystack_session_ids.length) {
     console.error(`skip ${q.question_id}: id/session length mismatch`);
     continue;
@@ -281,7 +306,7 @@ for (const q of questions) {
 
   processed++;
   if (processed % 50 === 0) {
-    process.stderr.write(`  ${processed}/${questions.length}\r`);
+    process.stderr.write(`  ${processed}\r`);
   }
 }
 
@@ -326,7 +351,7 @@ rows.push(
 
 console.log('\n# LongMemEval results — agent-knowledge\n');
 console.log(`Mode: **${modeName}**`);
-console.log(`Dataset: longmemeval_s (${data.length} questions, 500 expected)`);
+console.log(`Dataset: ${path.basename(datasetPath)}`);
 console.log(`Processed: ${processed} questions`);
 console.log(`Time: ${(elapsedMs / 1000).toFixed(1)}s\n`);
 console.log(rows.join('\n'));

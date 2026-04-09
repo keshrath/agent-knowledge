@@ -8,7 +8,7 @@
 
 **Cross-session memory and recall for AI coding assistants** -- works with Claude Code, Cursor, OpenCode, Cline, Continue.dev, and Aider out of the box. Git-synced knowledge base, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing.
 
-**Benchmark:** **R@5 = 97.2% (sparse) / 98.8% (hybrid)** on the public LongMemEval academic benchmark (Wu et al. 2024, ICLR 2025), full 500 questions, no LLM, no API key, runs entirely offline. R@10 = 98.4% / 99.6%. Full per-category table and reproduction instructions in [`bench/README.md`](bench/README.md).
+**Benchmark:** **R@5 = 97.2% (sparse) / 98.8% (hybrid)** on `longmemeval_s` and **86.0% (sparse) / 88.4% (hybrid)** on the harder `longmemeval_m` split — the public LongMemEval academic benchmark (Wu et al. 2024, ICLR 2025), full 500 questions per split, no LLM, no API key, runs entirely offline. **+8.6pp to +13.2pp R@5 over the paper's official `flat-bm25` baseline** in apples-to-apples reproduction. Full per-category table, reproduction instructions, and paper-comparison details in [`bench/README.md`](bench/README.md).
 
 <table>
 <tr>

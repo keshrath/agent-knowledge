@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.5.1 (2026-04-09)
+
+### Added
+
+- **Streaming JSON parser in `bench/longmemeval.ts`**. The benchmark now uses an async iterator (`stream-json`) for files >384 MB so the 2.6 GB `longmemeval_m` split can be benchmarked without hitting Node's ~512 MB string-length limit. Files under the threshold still use the original `readFileSync + JSON.parse` fast path with byte-identical results.
+- **`bench/longmemeval_m` results.** First time we've measured the harder split (500 distractor sessions per question, 10× more than `_s`):
+
+  | Mode                         | R@1   | R@5       | R@10  |
+  | ---------------------------- | ----- | --------- | ----- |
+  | 1.5 — BM25 + boosts (sparse) | 65.6% | **86.0%** | 92.4% |
+  | 1.5 — BM25 + semantic hybrid | 65.4% | **88.4%** | 92.2% |
+
+- **Validation against the LongMemEval paper's official `flat-bm25`** (`bench/paper_bm25_eval.py`). We re-ran the paper's exact corpus construction (user-only text per session), tokenization (`doc.split(" ")`), and `rank_bm25.BM25Okapi` defaults on the same data, with the paper's own `recall_any` evaluator from `src/retrieval/eval_utils.py`:
+
+  | Split           | Paper `flat-bm25` | agent-knowledge 1.5 BM25 | agent-knowledge 1.5 hybrid |
+  | --------------- | ----------------- | ------------------------ | -------------------------- |
+  | `longmemeval_s` | 88.6%             | **97.2% (+8.6pp)**       | **98.8% (+10.2pp)**        |
+  | `longmemeval_m` | 75.2%             | **86.0% (+10.8pp)**      | **88.4% (+13.2pp)**        |
+
+  The improvement comes from three small but cumulative differences vs the paper's BM25 setup: (1) we index both user and assistant turns instead of user-only, (2) we lowercase + strip stopwords instead of splitting on whitespace, (3) we use `k1 = 1.2` instead of the `BM25Okapi` default `1.5`.
+
+- `stream-json` and `@types/stream-json` as devDependencies (used by the bench only; not in the runtime).
+
+### Changed
+
+- `bench/longmemeval.ts` main loop is now an `async for await` over a streaming dataset iterator. The earlier eager-load path (`readFileSync` then `JSON.parse`) is preserved for files under 384 MB so existing reproduction commands stay byte-identical.
+
 ## 1.5.0 (2026-04-08)
 
 ### Changed
