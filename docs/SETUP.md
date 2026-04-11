@@ -61,7 +61,17 @@ agent-knowledge works with any MCP client (stdio) or HTTP client (REST API). Pic
 
 ### Claude Code
 
-#### Register the MCP server
+#### Quick setup (recommended)
+
+From the agent-knowledge clone:
+
+```bash
+node scripts/setup.js
+```
+
+This detects Claude Code, registers the MCP server in `~/.claude.json`, wires all 4 hooks into `~/.claude/settings.json`, and grants `mcp__agent-knowledge__*` permission in one shot. Restart Claude Code afterwards to pick up the new config.
+
+#### Register the MCP server (manual)
 
 ```bash
 claude mcp add agent-knowledge -s user \
@@ -170,15 +180,18 @@ curl -X PUT http://localhost:3423/api/knowledge/notes/my-note \
 
 ## Hooks
 
-Hooks announce the dashboard URL on session start. Support varies by client.
+agent-knowledge ships **4 hook scripts** that wire into Claude Code's lifecycle events. `scripts/setup.js` installs them automatically; the block below shows the manual equivalent. Support varies by client.
+
+| Hook                     | Event        | Purpose                                                       |
+| ------------------------ | ------------ | ------------------------------------------------------------- |
+| `session-start.js`       | SessionStart | Announces the knowledge dashboard URL                         |
+| `precompact-flush.mjs`   | PreCompact   | Rich session summary via the compiled agent-knowledge library |
+| `precompact-distill.mjs` | PreCompact   | Lightweight text snapshot of recent user prompts              |
+| `sessionend-distill.mjs` | SessionEnd   | Final summary (turn counts, tool uses, first 20 prompts)      |
+
+See [`docs/hooks.md`](hooks.md) for the full hook reference including environment variables and test coverage.
 
 ### Claude Code Hooks
-
-#### SessionStart + SubagentStart (`scripts/hooks/session-start.js`)
-
-Announces the knowledge dashboard URL on session start. Also fires for subagents via `SubagentStart`, ensuring spawned agents know about the knowledge base.
-
-Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -194,13 +207,29 @@ Add to `~/.claude/settings.json`:
         ]
       }
     ],
-    "SubagentStart": [
+    "PreCompact": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/session-start.js\"",
-            "timeout": 5
+            "command": "node \"/path/to/agent-knowledge/scripts/hooks/precompact-flush.mjs\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"/path/to/agent-knowledge/scripts/hooks/precompact-distill.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/path/to/agent-knowledge/scripts/hooks/sessionend-distill.mjs\"",
+            "timeout": 10
           }
         ]
       }
