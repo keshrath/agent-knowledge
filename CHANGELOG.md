@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.5.2 (2026-04-11)
+
+### Added
+
+- **Confidence metadata on entries.** New optional frontmatter fields `confidence: extracted|inferred` and `confidence_score: 0.0-1.0`. Distilled entries are tagged `inferred` automatically; user-written entries default to `extracted`. Search ranking applies a 0.85× multiplier to inferred entries so explicit user knowledge ranks above auto-derived insights when relevance is equal.
+
+- **Edge origin tracking.** New `origin` column on the `edges` table records how each relationship was created: `manual` (user-created via `knowledge_graph link`), `auto-link` (cosine similarity > 0.7 on write), `distill` (session distillation), or `reflect` (analysis cycle). Migration is non-destructive — existing edges default to `manual`.
+
+- **Analysis layer.** Three new `knowledge_analyze` actions:
+  - `god_nodes` — most-connected entries by degree centrality. Excludes auto-distilled entries that only have auto-link edges (noise).
+  - `bridges` — entries connecting different categories, ranked by betweenness centrality. Includes a `why` explanation showing which categories each bridge connects.
+  - `gaps` — entries with 0-1 graph edges, sorted by maturity (proven gaps are most concerning).
+
+- **Knowledge brief.** New `knowledge_analyze` action `brief` returns a compact (~200 token) summary of the knowledge base state: core concepts, active projects (accessed in last 30 days), recent decisions, stale count, gap count. Cached for 1 hour, invalidated on write/delete/link/unlink. Designed for agents to read on session start as orientation context.
+
+- **Deterministic pre-extraction in session distillation.** `getSessionSummary()` now extracts structured data from session transcripts via regex (no LLM):
+  - `gitCommits` — short SHAs from `git commit`/`merge`/`rebase` output
+  - `errorPatterns` — `Error:`/`Exception:`/`FAIL`/`Traceback` lines
+  - `urlsAccessed` — URLs from `WebFetch` and browser tool results (excludes asset/font noise)
+  - `packagesChanged` — package names from `npm install` and `pip install` commands
+
+  These appear as new subsections (`### Commits`, `### Errors Encountered`, `### URLs Accessed`, `### Packages Changed`) in distilled project entries, alongside the existing `### Files Touched` section.
+
+- **Dashboard UI cards.** New buttons in the Knowledge tab header:
+  - **God Nodes** — opens a panel showing the top connected entries with edge counts
+  - **Bridges** — shows cross-category connectors with a `why` explanation
+  - **Gaps** — lists isolated entries grouped by maturity
+  - **Brief** — displays the knowledge base summary in a code block plus card sections for core concepts and recent decisions
+
+- **New REST endpoints**: `GET /api/knowledge/god-nodes`, `GET /api/knowledge/bridges`, `GET /api/knowledge/gaps`, `GET /api/knowledge/brief`. All four are rate-limited as heavy endpoints (20 req/min per IP).
+
+- **e2e tests** in `tests/e2e/v15-features.e2e.test.ts` covering all new features against a real on-disk memory dir and real graph DB.
+
+### Changed
+
+- **`better-sqlite3` bumped from `^11.0.0` → `^12.8.0`.** v12 ships prebuilt binaries for Node 20.x through 25.x, so `npm install` no longer requires a local C++ toolchain on Node 24+. The obsolete "Windows note" about installing Visual Studio Build Tools has been removed from the README — it was only needed with v11 on Node 24 where no prebuilts existed. Aligns with the other agent-\* repos (`agent-comm`, `agent-common`, `agent-discover`, `agent-tasks`) which were already on 12.8.0.
+
 ## 1.5.1 (2026-04-09)
 
 ### Added

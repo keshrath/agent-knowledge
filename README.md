@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
-[![Tests: 399 passing](https://img.shields.io/badge/Tests-399%20passing-brightgreen.svg)]()
+[![Tests: 420 passing](https://img.shields.io/badge/Tests-420%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
 [![LongMemEval R@5: 98.8%](https://img.shields.io/badge/LongMemEval%20R%405-98.8%25-brightgreen.svg)]()
 
@@ -70,6 +70,11 @@ No configuration needed. Additional session roots can be added via the `EXTRA_SE
 - **Memory consolidation** -- TF-IDF duplicate detection on write (warns of similar entries) plus `knowledge_analyze(action: "consolidate")` for batch dedup scanning
 - **Reflection cycle** -- `knowledge_analyze(action: "reflect")` surfaces unconnected entries and generates structured prompts for the agent to identify new graph connections
 - **Auto-linking on write** -- new entries automatically linked to top-3 similar existing entries when cosine similarity > 0.7
+- **Confidence metadata** — entries tagged `extracted` (user-written) or `inferred` (auto-distilled, 0.85× search rank multiplier); `confidence_score` field carries the model's certainty 0-1
+- **Knowledge analysis** — `knowledge_analyze` actions `god_nodes` (most-connected entries), `bridges` (cross-category connectors), `gaps` (isolated entries)
+- **Knowledge brief** — `knowledge_analyze(action: "brief")` returns a cached ~200 token summary (core concepts, active projects, recent decisions, stale and gap counts) for session-start orientation
+- **Edge provenance** — graph edges track `origin` (manual, auto-link, distill, reflect) so analysis can distinguish user judgment from automated heuristics
+- **Deterministic pre-extraction in distillation** — session summaries now include git commits, error patterns, URLs accessed, and packages changed extracted via regex from bash/tool output (no LLM cost)
 
 ## Quick Start
 
@@ -86,14 +91,6 @@ git clone https://github.com/keshrath/agent-knowledge.git
 cd agent-knowledge
 npm install && npm run build
 ```
-
-> **Windows note**: `better-sqlite3` requires native compilation. If `npm install` fails with `gyp ERR!`, install the C++ build tools:
->
-> ```powershell
-> winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive"
-> ```
->
-> Then re-run `npm install`. This is only needed when prebuilt binaries aren't available for your Node.js version (e.g. Node 24+).
 
 ### Option 1: MCP server (for AI agents)
 
@@ -162,10 +159,14 @@ Relationship types: `related_to`, `supersedes`, `depends_on`, `contradicts`, `sp
 
 ### Analysis
 
-| Tool                | Action        | Description                          | Parameters                  |
-| ------------------- | ------------- | ------------------------------------ | --------------------------- |
-| `knowledge_analyze` | `consolidate` | Find near-duplicate entries          | `category?`, `threshold?`   |
-|                     | `reflect`     | Find unconnected entries for linking | `category?`, `max_entries?` |
+| Tool                | Action        | Description                                | Parameters                  |
+| ------------------- | ------------- | ------------------------------------------ | --------------------------- |
+| `knowledge_analyze` | `consolidate` | Find near-duplicate entries                | `category?`, `threshold?`   |
+|                     | `reflect`     | Find unconnected entries for linking       | `category?`, `max_entries?` |
+|                     | `god_nodes`   | Most-connected entries (degree centrality) | `top_n?`                    |
+|                     | `bridges`     | Cross-category connectors (betweenness)    | `top_n?`                    |
+|                     | `gaps`        | Isolated entries (0-1 edges) by maturity   | `max_entries?`              |
+|                     | `brief`       | Cached ~200 token knowledge base summary   | --                          |
 
 ### Admin
 
@@ -176,17 +177,21 @@ Relationship types: `related_to`, `supersedes`, `depends_on`, `contradicts`, `sp
 
 ## REST API
 
-| Method | Endpoint                                | Description              |
-| ------ | --------------------------------------- | ------------------------ |
-| GET    | `/api/knowledge`                        | List knowledge entries   |
-| GET    | `/api/knowledge/search?q=`              | Search knowledge base    |
-| GET    | `/api/knowledge/:path`                  | Read a specific entry    |
-| GET    | `/api/sessions`                         | List sessions            |
-| GET    | `/api/sessions/search?q=&role=&ranked=` | Search sessions (TF-IDF) |
-| GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall            |
-| GET    | `/api/sessions/:id`                     | Read a session           |
-| GET    | `/api/sessions/:id/summary`             | Session summary          |
-| GET    | `/health`                               | Health check             |
+| Method | Endpoint                                | Description               |
+| ------ | --------------------------------------- | ------------------------- |
+| GET    | `/api/knowledge`                        | List knowledge entries    |
+| GET    | `/api/knowledge/search?q=`              | Search knowledge base     |
+| GET    | `/api/knowledge/:path`                  | Read a specific entry     |
+| GET    | `/api/knowledge/god-nodes?top_n=`       | Most-connected entries    |
+| GET    | `/api/knowledge/bridges?top_n=`         | Cross-category connectors |
+| GET    | `/api/knowledge/gaps?max_entries=`      | Isolated entries          |
+| GET    | `/api/knowledge/brief`                  | Knowledge base brief      |
+| GET    | `/api/sessions`                         | List sessions             |
+| GET    | `/api/sessions/search?q=&role=&ranked=` | Search sessions (TF-IDF)  |
+| GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall             |
+| GET    | `/api/sessions/:id`                     | Read a session            |
+| GET    | `/api/sessions/:id/summary`             | Session summary           |
+| GET    | `/health`                               | Health check              |
 
 ## Architecture
 

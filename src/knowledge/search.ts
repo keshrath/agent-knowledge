@@ -124,7 +124,8 @@ export function searchKnowledge(
         | 'established'
         | 'proven';
       const lastAccessed = scoreInfo?.last_accessed ?? null;
-      let finalScore = computeFinalScore(result.score, lastAccessed, maturity);
+      const confidence = doc.entry.confidence;
+      let finalScore = computeFinalScore(result.score, lastAccessed, maturity, confidence);
 
       // Category boost: in 'boost' mode, give matching-category entries an
       // edge instead of dropping non-matching entries.

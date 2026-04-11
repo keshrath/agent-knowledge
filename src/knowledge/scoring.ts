@@ -60,10 +60,12 @@ export function computeFinalScore(
   baseRelevance: number,
   lastAccessed: string | null,
   maturity: Maturity,
+  confidence?: string,
 ): number {
   const decay = lastAccessed ? decayFactor(lastAccessed) : 1;
   const multiplier = maturityMultiplier(maturity);
-  return baseRelevance * decay * multiplier;
+  const confidenceFactor = confidence === 'inferred' ? 0.85 : 1.0;
+  return baseRelevance * decay * multiplier * confidenceFactor;
 }
 
 /**
@@ -243,4 +245,16 @@ export function getEntryScoring(dbPath?: string): EntryScoring {
     _scoringInstance = new EntryScoring(dbPath);
   }
   return _scoringInstance;
+}
+
+/** Reset the singleton (for tests). */
+export function resetEntryScoring(): void {
+  if (_scoringInstance) {
+    try {
+      _scoringInstance.close();
+    } catch {
+      /* ignore */
+    }
+    _scoringInstance = null;
+  }
 }

@@ -11,6 +11,13 @@ import { getKnowledgeGraph, RELATIONSHIP_TYPES, type RelationshipType } from './
 import { getEntryScoring } from './knowledge/scoring.js';
 import { checkDuplicates } from './knowledge/consolidate.js';
 import { consolidate } from './knowledge/consolidate.js';
+import {
+  godNodes,
+  bridges,
+  gaps,
+  generateBrief,
+  invalidateBriefCache,
+} from './knowledge/analyze.js';
 import { reflect } from './knowledge/reflect.js';
 import { indexKnowledgeEntry } from './sessions/indexer.js';
 import { searchSessions } from './sessions/search.js';
@@ -149,6 +156,7 @@ export async function handleKnowledge(args: Record<string, unknown>): Promise<To
       await gitPull(config.memoryDir);
       const filePath = writeEntry(config.memoryDir, category, filename, writeContent);
       invalidateKnowledgeIndexCache();
+      invalidateBriefCache();
       const pushResult = await gitPush(config.memoryDir);
 
       // Index the entry for embeddings
@@ -168,7 +176,15 @@ export async function handleKnowledge(args: Record<string, unknown>): Promise<To
           for (const hit of similar) {
             if (hit.sourceId === filePath) continue;
             if (hit.score > 0.7) {
-              graphStore.link(filePath, hit.sourceId, 'related_to', hit.score);
+              graphStore.link(
+                filePath,
+                hit.sourceId,
+                'related_to',
+                hit.score,
+                null,
+                null,
+                'auto-link',
+              );
               autoLinks.push({
                 target: hit.sourceId,
                 similarity: Math.round(hit.score * 100) / 100,
@@ -208,6 +224,7 @@ export async function handleKnowledge(args: Record<string, unknown>): Promise<To
       await gitPull(config.memoryDir);
       const deleted = deleteEntry(config.memoryDir, entryPath);
       invalidateKnowledgeIndexCache();
+      invalidateBriefCache();
       const pushResult = await gitPush(config.memoryDir);
       return ok({ deleted, git: pushResult });
     }
@@ -510,6 +527,7 @@ export function handleKnowledgeGraphConsolidated(args: Record<string, unknown>):
         validFrom,
         validTo,
       );
+      invalidateBriefCache();
       return ok(edge);
     }
     case 'unlink': {
@@ -584,8 +602,33 @@ export async function handleKnowledgeAnalyze(args: Record<string, unknown>): Pro
       const result = reflect(config.memoryDir, category, maxEntries);
       return ok(result);
     }
+    case 'god_nodes': {
+      const topN = optionalNumber(a, 'top_n', 1, 50) ?? 10;
+      await gitPull(config.memoryDir);
+      const nodes = godNodes(config.memoryDir, topN);
+      return ok(nodes);
+    }
+    case 'bridges': {
+      const topN = optionalNumber(a, 'top_n', 1, 20) ?? 5;
+      await gitPull(config.memoryDir);
+      const result = bridges(config.memoryDir, topN);
+      return ok(result);
+    }
+    case 'gaps': {
+      const maxEntries = optionalNumber(a, 'max_entries', 1, 100) ?? 30;
+      await gitPull(config.memoryDir);
+      const result = gaps(config.memoryDir, maxEntries);
+      return ok(result);
+    }
+    case 'brief': {
+      await gitPull(config.memoryDir);
+      const result = generateBrief(config.memoryDir);
+      return ok(result);
+    }
     default:
-      return err(`Unknown action: ${action}. Valid actions: consolidate, reflect`);
+      return err(
+        `Unknown action: ${action}. Valid actions: consolidate, reflect, god_nodes, bridges, gaps, brief`,
+      );
   }
 }
 

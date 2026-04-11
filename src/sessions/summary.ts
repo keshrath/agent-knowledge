@@ -17,6 +17,10 @@ export interface SessionSummary {
   topics: Array<{ timestamp: string | null; content: string }>;
   toolsUsed: string[];
   filesModified: string[];
+  gitCommits: string[];
+  errorPatterns: string[];
+  urlsAccessed: string[];
+  packagesChanged: string[];
 }
 
 // ── File path extraction ────────────────────────────────────────────────────
@@ -51,6 +55,97 @@ const TOOL_NAME_RE = /(?:"name"\s*:\s*"([^"]+)"|^(\w+(?:_\w+)*))/;
 function extractToolName(content: string): string | null {
   const match = content.match(TOOL_NAME_RE);
   return match ? (match[1] ?? match[2] ?? null) : null;
+}
+
+// ── Structured extraction (deterministic, no LLM) ─────────────────────────
+
+// Git commit SHAs — match 7-40 char hex strings preceded by commit-related context
+const GIT_COMMIT_RE = /\b([0-9a-f]{7,40})\b/g;
+const GIT_COMMIT_CONTEXT_RE = /(?:commit|merge|cherry-pick|revert|rebase|push|pull|checkout)\b/i;
+
+function extractGitCommits(messages: Array<{ role: string; content: string }>): string[] {
+  const commits = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== 'tool_result') continue;
+    // Only extract from output that looks like git output
+    if (!GIT_COMMIT_CONTEXT_RE.test(msg.content)) continue;
+    GIT_COMMIT_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = GIT_COMMIT_RE.exec(msg.content)) !== null) {
+      const sha = match[1];
+      // Filter out common false positives (all-zeros, etc)
+      if (sha.length >= 7 && sha.length <= 40 && !/^0+$/.test(sha)) {
+        commits.add(sha.substring(0, 7)); // Normalize to short SHA
+      }
+    }
+  }
+  return Array.from(commits).slice(0, 20);
+}
+
+// Error patterns — extract Error/Exception lines
+const ERROR_LINE_RE = /^.*(?:Error|Exception|FAIL|FATAL|panic|Traceback)[:.\s].{10,200}/gm;
+
+function extractErrorPatterns(messages: Array<{ role: string; content: string }>): string[] {
+  const errors = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== 'tool_result') continue;
+    ERROR_LINE_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = ERROR_LINE_RE.exec(msg.content)) !== null) {
+      const line = match[0].trim();
+      if (line.length > 10 && line.length < 200) {
+        errors.add(line);
+      }
+      if (errors.size >= 10) break;
+    }
+  }
+  return Array.from(errors);
+}
+
+// URLs — from tool results
+const URL_RE = /https?:\/\/[^\s"'<>)\]]+/g;
+// Filter out noise URLs
+const URL_NOISE =
+  /\.(png|jpg|jpeg|gif|svg|ico|woff|ttf|eot|map)(\?|$)|fonts\.googleapis|cdnjs|unpkg/i;
+
+function extractUrls(messages: Array<{ role: string; content: string }>): string[] {
+  const urls = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== 'tool_result' && msg.role !== 'tool_use') continue;
+    URL_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = URL_RE.exec(msg.content)) !== null) {
+      const url = match[0].replace(/[.,;:!?)]+$/, ''); // Strip trailing punctuation
+      if (!URL_NOISE.test(url) && url.length < 200) {
+        urls.add(url);
+      }
+      if (urls.size >= 15) break;
+    }
+  }
+  return Array.from(urls);
+}
+
+// Package changes — npm install / pip install
+const NPM_INSTALL_RE = /npm\s+(?:install|i|add)\s+([^\s&|;]+(?:\s+[^\s&|;-][^\s&|;]*)*)/g;
+const PIP_INSTALL_RE = /pip\s+install\s+([^\s&|;]+(?:\s+[^\s&|;-][^\s&|;]*)*)/g;
+
+function extractPackageChanges(messages: Array<{ role: string; content: string }>): string[] {
+  const packages = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role !== 'tool_use' && msg.role !== 'tool_result') continue;
+    for (const re of [NPM_INSTALL_RE, PIP_INSTALL_RE]) {
+      re.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(msg.content)) !== null) {
+        // Split the args — each word is a package name (ignore flags starting with -)
+        const args = match[1].split(/\s+/).filter((a) => !a.startsWith('-') && a.length > 0);
+        for (const pkg of args) {
+          packages.add(pkg.replace(/@[\d^~>=<.*]+$/, '')); // Strip version specifiers
+        }
+      }
+    }
+  }
+  return Array.from(packages).slice(0, 20);
 }
 
 // ── Session summary ─────────────────────────────────────────────────────────
@@ -117,12 +212,22 @@ export function getSessionSummary(sessionId: string, project?: string): SessionS
       }
     }
 
+    // Structured extraction — deterministic, no LLM
+    const gitCommits = extractGitCommits(messages);
+    const errorPatterns = extractErrorPatterns(messages);
+    const urlsAccessed = extractUrls(messages);
+    const packagesChanged = extractPackageChanges(messages);
+
     return {
       meta,
       topicCount: topics.length,
       topics,
       toolsUsed: Array.from(toolNames).sort(),
       filesModified: Array.from(allFiles).sort(),
+      gitCommits,
+      errorPatterns,
+      urlsAccessed,
+      packagesChanged,
     };
   }
 

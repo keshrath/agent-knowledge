@@ -47,6 +47,10 @@
       knowledgeSearchResults: $('knowledge-search-results'),
       btnConsolidate: $('btn-consolidate'),
       btnReflect: $('btn-reflect'),
+      btnGodNodes: $('btn-god-nodes'),
+      btnBridges: $('btn-bridges'),
+      btnGaps: $('btn-gaps'),
+      btnBrief: $('btn-brief'),
       searchInput: $('search-input'),
       searchResults: $('search-results'),
       searchEmpty: $('search-empty'),
@@ -266,6 +270,18 @@
     }
     if (el.btnReflect) {
       el.btnReflect.addEventListener('click', () => K.loadReflect());
+    }
+    if (el.btnGodNodes) {
+      el.btnGodNodes.addEventListener('click', () => K.loadGodNodes());
+    }
+    if (el.btnBridges) {
+      el.btnBridges.addEventListener('click', () => K.loadBridges());
+    }
+    if (el.btnGaps) {
+      el.btnGaps.addEventListener('click', () => K.loadGaps());
+    }
+    if (el.btnBrief) {
+      el.btnBrief.addEventListener('click', () => K.loadBrief());
     }
 
     if (el.knowledgeSearchInput) {

@@ -25,6 +25,8 @@ export interface KnowledgeEntry {
   updated: string;
   category: string;
   content?: string;
+  confidence?: string; // 'extracted' | 'inferred'
+  confidence_score?: number; // 0.0 - 1.0
 }
 
 /**
@@ -107,12 +109,20 @@ export function listEntries(dir: string, category?: string, tag?: string): Knowl
       // Derive category from the first path segment
       const [entryCategory = ''] = file.split('/');
 
+      const confidence = typeof meta.confidence === 'string' ? meta.confidence : undefined;
+      const confidenceScore =
+        typeof meta.confidence_score === 'string' ? parseFloat(meta.confidence_score) : undefined;
+
       entries.push({
         path: file,
         title: (typeof meta.title === 'string' ? meta.title : '') || file.replace(/\.md$/, ''),
         tags: Array.isArray(meta.tags) ? meta.tags : [],
         updated: (typeof meta.updated === 'string' ? meta.updated : '') || '',
         category: entryCategory,
+        ...(confidence ? { confidence } : {}),
+        ...(confidenceScore !== undefined && !isNaN(confidenceScore)
+          ? { confidence_score: confidenceScore }
+          : {}),
       });
     } catch (err) {
       console.error('[knowledge] list entry:', err instanceof Error ? err.message : err);
@@ -148,6 +158,10 @@ export function readEntry(
 
   const [entryCategory = ''] = entryPath.split('/');
 
+  const confidence = typeof meta.confidence === 'string' ? meta.confidence : undefined;
+  const confidenceScore =
+    typeof meta.confidence_score === 'string' ? parseFloat(meta.confidence_score) : undefined;
+
   const entry: KnowledgeEntry = {
     path: entryPath,
     title: (typeof meta.title === 'string' ? meta.title : '') || entryPath.replace(/\.md$/, ''),
@@ -155,6 +169,10 @@ export function readEntry(
     updated: (typeof meta.updated === 'string' ? meta.updated : '') || '',
     category: entryCategory,
     content: body,
+    ...(confidence ? { confidence } : {}),
+    ...(confidenceScore !== undefined && !isNaN(confidenceScore)
+      ? { confidence_score: confidenceScore }
+      : {}),
   };
 
   return { entry, content };

@@ -233,6 +233,10 @@ interface ProjectInsights {
   tools: Set<string>;
   files: Set<string>;
   latestDate: string;
+  gitCommits: Set<string>;
+  errorPatterns: Set<string>;
+  urlsAccessed: Set<string>;
+  packagesChanged: Set<string>;
 }
 
 function extractInsights(cutoff: string | null): Map<string, ProjectInsights> {
@@ -266,7 +270,17 @@ function extractInsights(cutoff: string | null): Map<string, ProjectInsights> {
 
         let pi = raw.get(normalized);
         if (!pi) {
-          pi = { sessions: 0, topics: [], tools: new Set(), files: new Set(), latestDate: '' };
+          pi = {
+            sessions: 0,
+            topics: [],
+            tools: new Set(),
+            files: new Set(),
+            latestDate: '',
+            gitCommits: new Set(),
+            errorPatterns: new Set(),
+            urlsAccessed: new Set(),
+            packagesChanged: new Set(),
+          };
           raw.set(normalized, pi);
         }
 
@@ -278,6 +292,10 @@ function extractInsights(cutoff: string | null): Map<string, ProjectInsights> {
           const cleaned = f.replace(/^[A-Z]:[/\\]Users[/\\][^/\\]+[/\\]/i, '~/');
           pi.files.add(cleaned);
         }
+        for (const c of summary.gitCommits ?? []) pi.gitCommits.add(c);
+        for (const e of summary.errorPatterns ?? []) pi.errorPatterns.add(e);
+        for (const u of summary.urlsAccessed ?? []) pi.urlsAccessed.add(u);
+        for (const p of summary.packagesChanged ?? []) pi.packagesChanged.add(p);
         if (meta.startTime > pi.latestDate) pi.latestDate = meta.startTime;
       } catch (err) {
         console.error('[knowledge] extract insights:', err instanceof Error ? err.message : err);
@@ -337,6 +355,40 @@ function buildActivitySection(pi: ProjectInsights): string {
     if (pi.files.size > 30) {
       lines.push(`- _...and ${pi.files.size - 30} more_`);
     }
+    lines.push('');
+  }
+
+  if (pi.gitCommits.size > 0) {
+    lines.push('### Commits');
+    const commits = [...pi.gitCommits].slice(0, 10);
+    lines.push(commits.map((c) => `\`${c}\``).join(', '));
+    lines.push('');
+  }
+
+  if (pi.errorPatterns.size > 0) {
+    lines.push('### Errors Encountered');
+    const errors = [...pi.errorPatterns].slice(0, 5);
+    for (const e of errors) {
+      const safe = scrubContent(e);
+      if (safe.length > 10) {
+        lines.push(`- ${safe}`);
+      }
+    }
+    lines.push('');
+  }
+
+  if (pi.urlsAccessed.size > 0) {
+    lines.push('### URLs Accessed');
+    const urls = [...pi.urlsAccessed].slice(0, 10);
+    for (const u of urls) {
+      lines.push(`- ${u}`);
+    }
+    lines.push('');
+  }
+
+  if (pi.packagesChanged.size > 0) {
+    lines.push('### Packages Changed');
+    lines.push([...pi.packagesChanged].join(', '));
     lines.push('');
   }
 
@@ -450,6 +502,8 @@ export async function distillSessions(): Promise<{
           `title: ${normalizedName}`,
           `tags: [auto-distilled]`,
           `updated: ${new Date().toISOString().split('T')[0]}`,
+          `confidence: inferred`,
+          `confidence_score: 0.7`,
           '---',
           '',
           `# ${normalizedName}`,

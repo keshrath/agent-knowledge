@@ -67,6 +67,7 @@ import { getEntryScoring, decayFactor, maturityMultiplier } from './knowledge/sc
 import { getKnowledgeGraph } from './knowledge/graph.js';
 import { consolidate } from './knowledge/consolidate.js';
 import { reflect } from './knowledge/reflect.js';
+import { godNodes, bridges, gaps, generateBrief } from './knowledge/analyze.js';
 import {
   getProjectDirs,
   getSessionFiles,
@@ -100,6 +101,10 @@ const HEAVY_ENDPOINTS = new Set([
   '/api/knowledge/search',
   '/api/knowledge/consolidate',
   '/api/knowledge/reflect',
+  '/api/knowledge/god-nodes',
+  '/api/knowledge/bridges',
+  '/api/knowledge/gaps',
+  '/api/knowledge/brief',
   '/api/sessions/search',
   '/api/sessions/recall',
 ]);
@@ -282,6 +287,31 @@ const reflectRoute: RouteHandler = (req, res) => {
   json(res, reflect(getConfig().memoryDir, category, maxEntries));
 };
 
+const godNodesRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const topNParam = url.searchParams.get('top_n');
+  const topN = topNParam ? parseInt(topNParam, 10) : 10;
+  json(res, godNodes(getConfig().memoryDir, topN));
+};
+
+const bridgesRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const topNParam = url.searchParams.get('top_n');
+  const topN = topNParam ? parseInt(topNParam, 10) : 5;
+  json(res, bridges(getConfig().memoryDir, topN));
+};
+
+const gapsRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const maxParam = url.searchParams.get('max_entries');
+  const maxEntries = maxParam ? parseInt(maxParam, 10) : 30;
+  json(res, gaps(getConfig().memoryDir, maxEntries));
+};
+
+const briefRoute: RouteHandler = (_req, res) => {
+  json(res, generateBrief(getConfig().memoryDir));
+};
+
 const knowledgeListRoute: RouteHandler = (req, res) => {
   const url = urlOf(req);
   const category = url.searchParams.get('category') || undefined;
@@ -434,6 +464,10 @@ export function startDashboard(port?: number): Promise<http.Server> {
   router.route('GET', '/api/knowledge/search', knowledgeSearchRoute);
   router.route('GET', '/api/knowledge/consolidate', consolidateRoute);
   router.route('GET', '/api/knowledge/reflect', reflectRoute);
+  router.route('GET', '/api/knowledge/god-nodes', godNodesRoute);
+  router.route('GET', '/api/knowledge/bridges', bridgesRoute);
+  router.route('GET', '/api/knowledge/gaps', gapsRoute);
+  router.route('GET', '/api/knowledge/brief', briefRoute);
   router.route('GET', '/api/knowledge', knowledgeListRoute);
   router.route('GET', '/api/knowledge/:entryPath/links', knowledgeLinksRoute);
   router.route('GET', '/api/knowledge/:entryPath', knowledgeEntryRoute);

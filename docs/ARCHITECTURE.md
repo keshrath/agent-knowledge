@@ -52,6 +52,7 @@ src/
     scoring.ts          Confidence/decay scoring — entry_scores table, auto-promotion
     consolidate.ts      Memory consolidation — TF-IDF duplicate detection, cluster grouping
     reflect.ts          Reflection cycle — surfaces unconnected entries, generates prompts
+    analyze.ts          Graph analysis — god nodes, bridges, gaps, knowledge brief (deterministic, no LLM)
   sessions/
     parser.ts           Multi-format parsing with mtime cache + adapter dispatch
     search.ts           TF-IDF ranked search with 60s global index cache
@@ -185,6 +186,39 @@ Surfaces unconnected knowledge entries and prepares structured prompts for agent
 3. Instructions for the agent to call `knowledge_link` with suggested relationships
 
 Does NOT call an LLM — the calling agent processes the prompt in its own context and makes `knowledge_graph(action: "link")` calls based on its analysis.
+
+## Knowledge Analysis
+
+### analyze.ts
+
+Deterministic graph analysis — no LLM calls. Exposes four entry points under the `knowledge_analyze` MCP tool:
+
+- **`godNodes(top_n)`** — ranks entries by degree centrality (number of incoming + outgoing edges). Entries that are auto-distilled and only have `auto-link` origin edges are excluded as noise. Returns `{ path, title, category, degree, confidence }`.
+- **`bridges(top_n)`** — ranks entries by betweenness centrality, filtering to those connecting at least 2 different categories. Returns `{ path, title, betweenness, connects, why }` where `connects` is the list of bridged categories and `why` is a short explanation string.
+- **`gaps(max_entries)`** — entries with 0-1 graph edges, sorted `proven` first (most concerning), then by degree ascending. Returns `{ path, title, category, degree, maturity, daysSinceAccess }`.
+- **`generateBrief()`** — produces a compact (~200 token) plain-text summary of the knowledge base state: total entries/edges, core concepts (top god nodes), active projects (accessed in last 30 days), recent decisions, stale count, gap count. Cached for 1 hour in-memory; cache invalidated on any `write`/`delete`/`link`/`unlink` operation.
+
+## Confidence Metadata
+
+Entries may carry two optional frontmatter fields:
+
+- `confidence: extracted | inferred` — whether the entry was written by a human/agent (`extracted`, the default) or derived automatically by session distillation (`inferred`).
+- `confidence_score: 0.0-1.0` — numeric certainty from the extractor.
+
+Search ranking in `computeFinalScore()` applies a **0.85× multiplier to `inferred` entries** so explicit user knowledge ranks above auto-derived insights when relevance is otherwise equal. The `extracted` default means manually-authored entries keep their full score.
+
+## Edge Provenance
+
+The `edges` table has an additional `origin TEXT NOT NULL DEFAULT 'manual'` column tracking how each edge was created:
+
+| Origin      | Source                                                                    |
+| ----------- | ------------------------------------------------------------------------- |
+| `manual`    | User/agent-initiated `knowledge_graph(action: "link")` call               |
+| `auto-link` | Cosine similarity > 0.7 match created during `knowledge(action: "write")` |
+| `distill`   | Session distillation linking newly distilled entries                      |
+| `reflect`   | Analysis cycle creating suggested connections                             |
+
+`analyze.ts` uses the `origin` column to exclude auto-link-only distilled entries from god-node results. Migration is non-destructive — pre-existing edges default to `manual`.
 
 ## Session Module
 

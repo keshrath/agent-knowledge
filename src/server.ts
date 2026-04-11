@@ -280,17 +280,19 @@ export function createServer(options?: ServerOptions): Server {
       {
         name: 'knowledge_analyze',
         description:
-          'Analysis tools: find near-duplicate entries or unconnected entries. ' +
-          'Use action "consolidate" to scan for duplicates (TF-IDF similarity), ' +
-          '"reflect" to find entries with no graph connections and get a structured prompt for linking them.',
+          'Analysis tools: find duplicates, unconnected entries, most-connected concepts (god nodes), ' +
+          'bridge entries, knowledge gaps, or generate a compact knowledge brief. ' +
+          'Actions: consolidate, reflect, god_nodes, bridges, gaps, brief.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             action: {
               type: 'string',
-              enum: ['consolidate', 'reflect'],
+              enum: ['consolidate', 'reflect', 'god_nodes', 'bridges', 'gaps', 'brief'],
               description:
-                'Action: consolidate (find duplicates), reflect (find unconnected entries)',
+                'Action: consolidate (find duplicates), reflect (find unconnected entries), ' +
+                'god_nodes (most-connected entries), bridges (cross-cluster connectors), ' +
+                'gaps (entries with 0-1 edges), brief (compact knowledge base summary)',
             },
             category: {
               type: 'string',
@@ -304,6 +306,11 @@ export function createServer(options?: ServerOptions): Server {
             max_entries: {
               type: 'number',
               description: 'Max unconnected entries to include (action=reflect, default: 20)',
+            },
+            top_n: {
+              type: 'number',
+              description:
+                'Number of results (action=god_nodes default: 10, action=bridges default: 5)',
             },
           },
           required: ['action'],

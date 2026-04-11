@@ -31,6 +31,10 @@ agent-knowledge is an MCP (Model Context Protocol) server that provides cross-se
 - **Auto-linking** -- new entries are automatically linked to similar existing entries via cosine similarity.
 - **Duplicate detection** -- warns when writing entries that are similar to existing ones.
 - **Session distillation** -- past sessions are auto-distilled into knowledge entries on server startup.
+- **Confidence tagging** -- entries are marked `extracted` (user-written) or `inferred` (auto-distilled). Inferred entries are down-weighted in search ranking so explicit user knowledge is preferred.
+- **Knowledge analysis** -- find most-connected concepts (god nodes), cross-category bridges, and isolated entries (gaps).
+- **Knowledge brief** -- compact ~200 token summary of the knowledge base state for session-start orientation.
+- **Pre-extracted session insights** -- distillation extracts git commits, error patterns, URLs, and package changes from session transcripts via regex (no LLM cost).
 - **Real-time dashboard** -- web UI showing knowledge entries, sessions, and search results.
 
 ### Architecture
@@ -157,6 +161,15 @@ Shows all knowledge base entries organized by category. Each entry card displays
 - **Last accessed** timestamp.
 
 Click an entry to view its full Markdown content, related entries (from the knowledge graph), and score data.
+
+The Knowledge tab header includes analysis buttons:
+
+- **Duplicates** — scans entries for near-duplicates (TF-IDF similarity)
+- **Reflect** — finds entries with no graph connections, generates a structured prompt for the agent
+- **God Nodes** — opens a panel showing the most-connected entries (your core concepts)
+- **Bridges** — shows entries that connect different categories with a `why` explanation
+- **Gaps** — lists isolated entries (0-1 edges) sorted by maturity
+- **Brief** — displays the knowledge base summary suitable for session-start orientation
 
 ### Sessions Tab
 
@@ -497,12 +510,13 @@ Analysis tools for knowledge base maintenance.
 
 **Parameters:**
 
-| Name          | Type   | Required | Description                                                |
-| ------------- | ------ | -------- | ---------------------------------------------------------- |
-| `action`      | string | Yes      | One of: `consolidate`, `reflect`                           |
-| `category`    | string | No       | Scan only this category (omit for all)                     |
-| `threshold`   | number | No       | [consolidate] Similarity threshold 0-1 (default: 0.5)      |
-| `max_entries` | number | No       | [reflect] Max unconnected entries to include (default: 20) |
+| Name          | Type   | Required | Description                                                                      |
+| ------------- | ------ | -------- | -------------------------------------------------------------------------------- |
+| `action`      | string | Yes      | One of: `consolidate`, `reflect`, `god_nodes`, `bridges`, `gaps`, `brief`        |
+| `category`    | string | No       | Scan only this category (omit for all)                                           |
+| `threshold`   | number | No       | [consolidate] Similarity threshold 0-1 (default: 0.5)                            |
+| `max_entries` | number | No       | [reflect/gaps] Max entries to include (default: 20 for reflect, 30 for gaps)     |
+| `top_n`       | number | No       | [god_nodes/bridges] Max entries to return (default: 10 for god_nodes, 5 bridges) |
 
 **Action: consolidate**
 
@@ -526,6 +540,44 @@ knowledge_analyze with action "reflect", category "decisions", max_entries 10
 
 Returns unconnected entries and suggested relationships to investigate.
 
+**Action: `god_nodes`**
+
+Returns the most-connected entries in the knowledge graph, ranked by degree centrality.
+
+| Parameter | Type   | Default | Description               |
+| --------- | ------ | ------- | ------------------------- |
+| `top_n`   | number | 10      | Maximum entries to return |
+
+Returns: array of `{ path, title, category, degree, confidence }` sorted by degree descending. Entries with only auto-link edges and the `auto-distilled` tag are excluded.
+
+**Action: `bridges`**
+
+Returns entries that bridge different categories, ranked by betweenness centrality.
+
+| Parameter | Type   | Default | Description               |
+| --------- | ------ | ------- | ------------------------- |
+| `top_n`   | number | 5       | Maximum bridges to return |
+
+Returns: array of `{ path, title, betweenness, connects, why }`. Only entries connecting at least 2 different categories are returned.
+
+**Action: `gaps`**
+
+Returns entries with 0-1 graph edges (weakly connected or isolated).
+
+| Parameter     | Type   | Default | Description               |
+| ------------- | ------ | ------- | ------------------------- |
+| `max_entries` | number | 30      | Maximum entries to return |
+
+Returns: array of `{ path, title, category, degree, maturity, daysSinceAccess }` sorted with `proven` entries first (most concerning gaps), then by degree ascending.
+
+**Action: `brief`**
+
+Returns a compact summary of the knowledge base state (cached 1 hour, invalidated on write/delete/link/unlink).
+
+No parameters.
+
+Returns: `{ total_entries, total_edges, core_concepts, active_projects, recent_decisions, stale_count, gap_count, generated_at, text }`. The `text` field is a ~200 token plain-text summary suitable for injection into agent prompts.
+
 ---
 
 ## 6. REST API Reference
@@ -547,7 +599,33 @@ GET  /api/knowledge/:path/links           Get graph edges for an entry
 GET  /api/knowledge/search                Search entries (?q=&category=&max_results=)
 GET  /api/knowledge/consolidate           Find duplicates (?category=&threshold=)
 GET  /api/knowledge/reflect               Find unconnected entries (?category=&max_entries=)
+GET  /api/knowledge/god-nodes             Most-connected entries (?top_n=)
+GET  /api/knowledge/bridges               Cross-category connectors (?top_n=)
+GET  /api/knowledge/gaps                  Isolated entries (?max_entries=)
+GET  /api/knowledge/brief                 Cached knowledge base brief
 ```
+
+### `GET /api/knowledge/god-nodes`
+
+Query params: `top_n` (number, default 10).
+
+Returns: same as `knowledge_analyze(action: "god_nodes")`.
+
+### `GET /api/knowledge/bridges`
+
+Query params: `top_n` (number, default 5).
+
+Returns: same as `knowledge_analyze(action: "bridges")`.
+
+### `GET /api/knowledge/gaps`
+
+Query params: `max_entries` (number, default 30).
+
+Returns: same as `knowledge_analyze(action: "gaps")`.
+
+### `GET /api/knowledge/brief`
+
+No query params. Returns the cached knowledge brief.
 
 ### Sessions
 

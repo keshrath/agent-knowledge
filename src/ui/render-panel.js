@@ -23,6 +23,14 @@
       renderConsolidatePanel(data, el);
     } else if (type === 'reflect') {
       renderReflectPanel(data, el);
+    } else if (type === 'god-nodes') {
+      renderGodNodesPanel(data, el);
+    } else if (type === 'bridges') {
+      renderBridgesPanel(data, el);
+    } else if (type === 'gaps') {
+      renderGapsPanel(data, el);
+    } else if (type === 'brief') {
+      renderBriefPanel(data, el);
     }
   }
 
@@ -293,6 +301,127 @@
         '<h4 class="panel-section-title"><span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px">smart_toy</span>Suggested Prompt</h4>';
       html += `<div class="prose" style="font-size:12px;max-height:300px;overflow-y:auto"><pre style="white-space:pre-wrap;font-size:11px">${K.esc(data.instructions)}</pre></div>`;
       html += '</div>';
+    }
+
+    K.morph(el.panelBody, html);
+  }
+
+  // ── God Nodes panel ───────────────────────────────────────────────────────
+
+  function renderGodNodesPanel(data, el) {
+    K.morph(
+      el.panelTitle,
+      '<span class="material-symbols-outlined panel-icon">hub</span>God Nodes',
+    );
+
+    let html = '<div class="panel-meta">';
+    html += `<span class="panel-meta-item">${data.length} entries</span>`;
+    html += '<span class="panel-meta-item">ranked by edge degree</span>';
+    html += '</div>';
+
+    html += '<div class="panel-section"><div class="related-entries">';
+    for (const node of data) {
+      html += `<div class="related-entry" data-path="${K.esc(node.path)}" tabindex="0" role="button">
+        <span class="card-category" data-cat="${K.esc(node.category)}" style="font-size:10px">${K.esc(node.category)}</span>
+        <span class="related-entry-title">${K.esc(node.title)}</span>
+        <span class="related-entry-strength" title="${node.degree} edges">${node.degree} edges</span>
+      </div>`;
+    }
+    html += '</div></div>';
+
+    K.morph(el.panelBody, html);
+  }
+
+  // ── Bridges panel ─────────────────────────────────────────────────────────
+
+  function renderBridgesPanel(data, el) {
+    K.morph(
+      el.panelTitle,
+      '<span class="material-symbols-outlined panel-icon">linked_services</span>Bridge Entries',
+    );
+
+    let html = '<div class="panel-meta">';
+    html += `<span class="panel-meta-item">${data.length} bridges</span>`;
+    html += '<span class="panel-meta-item">cross-category connectors</span>';
+    html += '</div>';
+
+    html += '<div class="panel-section"><div class="related-entries">';
+    for (const b of data) {
+      html += `<div class="related-entry" data-path="${K.esc(b.path)}" tabindex="0" role="button">
+        <span class="related-entry-title">${K.esc(b.title)}</span>
+        <span class="related-entry-strength" title="Betweenness: ${b.betweenness}">${b.betweenness}</span>
+      </div>`;
+      html += `<div style="font-size:11px;color:var(--text-secondary);padding:2px 8px 8px;line-height:1.4">${K.esc(b.why)}</div>`;
+    }
+    html += '</div></div>';
+
+    K.morph(el.panelBody, html);
+  }
+
+  // ── Gaps panel ────────────────────────────────────────────────────────────
+
+  function renderGapsPanel(data, el) {
+    K.morph(
+      el.panelTitle,
+      '<span class="material-symbols-outlined panel-icon">link_off</span>Knowledge Gaps',
+    );
+
+    let html = '<div class="panel-meta">';
+    html += `<span class="panel-meta-item">${data.length} entries</span>`;
+    html += '<span class="panel-meta-item">0-1 edges</span>';
+    html += '</div>';
+
+    html += '<div class="panel-section"><div class="related-entries">';
+    for (const g of data) {
+      const staleNote = g.daysSinceAccess !== null ? ` · ${g.daysSinceAccess}d` : ' · never';
+      html += `<div class="related-entry" data-path="${K.esc(g.path)}" tabindex="0" role="button">
+        <span class="card-category" data-cat="${K.esc(g.category)}" style="font-size:10px">${K.esc(g.category)}</span>
+        <span class="related-entry-title">${K.esc(g.title)}</span>
+        <span class="maturity-badge" data-maturity="${K.esc(g.maturity)}" style="font-size:10px">${K.esc(g.maturity)}${K.esc(staleNote)}</span>
+      </div>`;
+    }
+    html += '</div></div>';
+
+    K.morph(el.panelBody, html);
+  }
+
+  // ── Brief panel ───────────────────────────────────────────────────────────
+
+  function renderBriefPanel(data, el) {
+    K.morph(
+      el.panelTitle,
+      '<span class="material-symbols-outlined panel-icon">summarize</span>Knowledge Brief',
+    );
+
+    let html = '<div class="panel-meta">';
+    html += `<span class="panel-meta-item">${data.total_entries} entries</span>`;
+    html += `<span class="panel-meta-item">${data.total_edges} edges</span>`;
+    if (data.generated_at) {
+      const date = new Date(data.generated_at).toLocaleString();
+      html += `<span class="panel-meta-item">${K.esc(date)}</span>`;
+    }
+    html += '</div>';
+
+    html += '<div class="panel-section">';
+    html += `<div class="prose"><pre style="white-space:pre-wrap;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;background:var(--bg-elevated);padding:12px;border-radius:6px;border:1px solid var(--border)">${K.esc(data.text || '')}</pre></div>`;
+    html += '</div>';
+
+    if (data.core_concepts && data.core_concepts.length > 0) {
+      html += '<div class="panel-section"><h4 class="panel-section-title">Core concepts</h4>';
+      html += '<div class="related-entries">';
+      for (const c of data.core_concepts) {
+        html += `<div class="related-entry"><span class="related-entry-title">${K.esc(c)}</span></div>`;
+      }
+      html += '</div></div>';
+    }
+
+    if (data.recent_decisions && data.recent_decisions.length > 0) {
+      html += '<div class="panel-section"><h4 class="panel-section-title">Recent decisions</h4>';
+      html += '<div class="related-entries">';
+      for (const d of data.recent_decisions) {
+        html += `<div class="related-entry"><span class="related-entry-title">${K.esc(d)}</span></div>`;
+      }
+      html += '</div></div>';
     }
 
     K.morph(el.panelBody, html);

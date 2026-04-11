@@ -212,6 +212,65 @@
     }
   }
 
+  // ── God Nodes ─────────────────────────────────────────────────────────────
+
+  async function loadGodNodes() {
+    try {
+      K.toast('Finding most connected entries...', 'info', 2000);
+      const result = await K.api('/knowledge/god-nodes');
+      if (Array.isArray(result) && result.length > 0) {
+        K.openPanel('god-nodes', result);
+      } else {
+        K.toast('No god nodes — graph has no edges yet', 'success');
+      }
+    } catch (err) {
+      K.toast(`God nodes failed: ${err.message}`, 'error');
+    }
+  }
+
+  // ── Bridges ───────────────────────────────────────────────────────────────
+
+  async function loadBridges() {
+    try {
+      K.toast('Finding bridge entries...', 'info', 2000);
+      const result = await K.api('/knowledge/bridges');
+      if (Array.isArray(result) && result.length > 0) {
+        K.openPanel('bridges', result);
+      } else {
+        K.toast('No bridges found — graph has no cross-category connections', 'success');
+      }
+    } catch (err) {
+      K.toast(`Bridges failed: ${err.message}`, 'error');
+    }
+  }
+
+  // ── Gaps ──────────────────────────────────────────────────────────────────
+
+  async function loadGaps() {
+    try {
+      K.toast('Finding knowledge gaps...', 'info', 2000);
+      const result = await K.api('/knowledge/gaps');
+      if (Array.isArray(result) && result.length > 0) {
+        K.openPanel('gaps', result);
+      } else {
+        K.toast('No gaps — all entries are well connected', 'success');
+      }
+    } catch (err) {
+      K.toast(`Gaps failed: ${err.message}`, 'error');
+    }
+  }
+
+  // ── Brief ─────────────────────────────────────────────────────────────────
+
+  async function loadBrief() {
+    try {
+      const result = await K.api('/knowledge/brief');
+      K.openPanel('brief', result);
+    } catch (err) {
+      K.toast(`Brief failed: ${err.message}`, 'error');
+    }
+  }
+
   // ── Export ──────────────────────────────────────────────────────────────────
 
   Object.assign(K, {
@@ -221,5 +280,9 @@
     openKnowledgePanel,
     loadConsolidate,
     loadReflect,
+    loadGodNodes,
+    loadBridges,
+    loadGaps,
+    loadBrief,
   });
 })();

@@ -22,6 +22,7 @@ src/
     scoring.ts          Confidence/decay scoring — entry_scores table, auto-promotion
     consolidate.ts      Memory consolidation — TF-IDF duplicate detection, cluster grouping
     reflect.ts          Reflection cycle — surfaces unconnected entries, generates prompts
+    analyze.ts          Graph analysis — god nodes, bridges, gaps, knowledge brief
   sessions/
     parser.ts           Multi-format session parsing with mtime-based cache
     indexer.ts           Background indexing for sessions
@@ -89,7 +90,7 @@ npm run dev        # watch mode (tsc --watch)
 
 ## Key APIs
 
-- **MCP** (6 tools): `knowledge` (actions: list/read/write/delete/sync), `knowledge_search` (general + scoped recall via `scope` param), `knowledge_session` (actions: list/get/summary), `knowledge_graph` (actions: link/unlink/list/traverse), `knowledge_analyze` (actions: consolidate/reflect), `knowledge_admin` (actions: status/config/rebuild_embeddings)
+- **MCP** (6 tools): `knowledge` (actions: list/read/write/delete/sync), `knowledge_search` (general + scoped recall via `scope` param), `knowledge_session` (actions: list/get/summary), `knowledge_graph` (actions: link/unlink/list/traverse), `knowledge_analyze` (actions: consolidate/reflect/god_nodes/bridges/gaps/brief), `knowledge_admin` (actions: status/config/rebuild_embeddings)
 - **Dashboard**: HTTP + WebSocket at port 3423, REST API for entries/sessions/search
 - **Git sync**: Auto pull/push on write, manual sync via `knowledge(action: 'sync')`
 
@@ -112,6 +113,10 @@ Additional roots: `EXTRA_SESSION_ROOTS` env var (comma-separated). New tools: im
 - Knowledge graph: typed edges between entries (8 relationship types), BFS traversal via `knowledge_graph`
 - Confidence/decay scoring: search ranking weighted by access frequency and recency (candidate->established->proven)
 - Auto-linking: `knowledge` with `action: "write"` auto-creates `related_to` edges for top-3 similar entries (cosine > 0.7)
+- Confidence tagging: entries have optional `confidence: extracted|inferred` frontmatter; inferred entries get 0.85× search ranking
+- Edge origin: graph edges track `origin` (manual/auto-link/distill/reflect) for provenance
+- Analysis: `knowledge_analyze` actions for god_nodes, bridges, gaps, brief
+- Pre-extraction: session distillation extracts commits/errors/urls/packages via regex
 
 ## Commit Messages
 

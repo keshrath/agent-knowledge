@@ -28,6 +28,10 @@ Category filter chips at the top: All, Projects, People, Decisions, Workflows, N
 
 - **Duplicates** — scans all entries for near-duplicates using TF-IDF similarity. Entries in duplicate clusters get a warning icon on their card. Opens a side panel showing clusters with pairwise similarity scores. Click any entry in a cluster to view it.
 - **Reflect** — finds entries with no graph connections. Opens a side panel listing unconnected entries with content summaries and instructions for creating new links.
+- **God Nodes** — opens a side panel showing the most-connected entries (top degree centrality) with edge counts. These are your core concepts.
+- **Bridges** — shows entries that connect different categories, ranked by betweenness centrality. Each row includes a `why` explanation of which categories it bridges.
+- **Gaps** — lists isolated entries (0-1 edges) grouped by maturity, with `proven` entries listed first as the most concerning gaps.
+- **Brief** — displays the cached ~200 token knowledge base summary in a code block plus card sections for core concepts and recent decisions. Suitable for session-start orientation.
 
 Click a card to open the side panel with rendered markdown content, score details, and related entries.
 
@@ -118,6 +122,10 @@ File watcher monitors `src/ui/` for `.html`, `.css`, `.js` changes. On change, b
 | GET    | `/api/knowledge/:path/links`            | Graph edges for entry        |
 | GET    | `/api/knowledge/consolidate?threshold=` | Duplicate cluster analysis   |
 | GET    | `/api/knowledge/reflect?max_entries=`   | Unconnected entries + prompt |
+| GET    | `/api/knowledge/god-nodes?top_n=`       | Most-connected entries       |
+| GET    | `/api/knowledge/bridges?top_n=`         | Cross-category connectors    |
+| GET    | `/api/knowledge/gaps?max_entries=`      | Isolated entries by maturity |
+| GET    | `/api/knowledge/brief`                  | Cached knowledge base brief  |
 | GET    | `/api/sessions`                         | List sessions                |
 | GET    | `/api/sessions/search?q=&role=&ranked=` | Search sessions              |
 | GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall                |

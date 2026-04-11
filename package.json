@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -76,7 +76,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "agent-common": "^1.0.0",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.8.0",
     "morphdom": "^2.7.8",
     "sqlite-vec": "^0.1.0",
     "ws": "^8.20.0"

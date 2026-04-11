@@ -38,6 +38,7 @@ export interface Edge {
   valid_from: string | null;
   /** ISO date when this fact stopped being true. Null = still valid. */
   valid_to: string | null;
+  origin: string; // 'manual' | 'auto-link' | 'distill' | 'reflect'
 }
 
 /** Returns true if the edge is valid at the given ISO date (or now). */
@@ -108,6 +109,13 @@ export class KnowledgeGraph {
         }
       }
 
+      // Migration: add origin column
+      try {
+        this.db.exec(`ALTER TABLE edges ADD COLUMN origin TEXT DEFAULT 'manual'`);
+      } catch {
+        // column already exists
+      }
+
       this.initialized = true;
     } catch (err) {
       console.error(`[knowledge] Failed to initialize graph: ${err}`);
@@ -128,6 +136,7 @@ export class KnowledgeGraph {
     strength: number = 0.5,
     validFrom: string | null = null,
     validTo: string | null = null,
+    origin: string = 'manual',
   ): Edge {
     this.init();
     if (!this.db) throw new Error('Graph database not available');
@@ -146,14 +155,15 @@ export class KnowledgeGraph {
 
     this.db
       .prepare(
-        `INSERT INTO edges (source, target, rel_type, strength, valid_from, valid_to)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO edges (source, target, rel_type, strength, valid_from, valid_to, origin)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(source, target, rel_type)
          DO UPDATE SET strength = excluded.strength,
                        valid_from = excluded.valid_from,
-                       valid_to = excluded.valid_to`,
+                       valid_to = excluded.valid_to,
+                       origin = excluded.origin`,
       )
-      .run(source, target, relType, strength, validFrom, validTo);
+      .run(source, target, relType, strength, validFrom, validTo, origin);
 
     const row = this.db
       .prepare('SELECT * FROM edges WHERE source = ? AND target = ? AND rel_type = ?')
@@ -339,4 +349,12 @@ export function getKnowledgeGraph(dbPath?: string): KnowledgeGraph {
     _graphInstance = new KnowledgeGraph(dbPath);
   }
   return _graphInstance;
+}
+
+/** Reset the singleton (for tests). */
+export function resetKnowledgeGraph(): void {
+  if (_graphInstance) {
+    _graphInstance.close();
+    _graphInstance = null;
+  }
 }
