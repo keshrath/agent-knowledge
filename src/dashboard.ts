@@ -312,6 +312,52 @@ const briefRoute: RouteHandler = (_req, res) => {
   json(res, generateBrief(getConfig().memoryDir));
 };
 
+const graphDataRoute: RouteHandler = (_req, res) => {
+  try {
+    const entries = listEntries(getConfig().memoryDir);
+    const allEdges = getKnowledgeGraph().links();
+    const scoring = getEntryScoring();
+    const scores = scoring.getScores(entries.map((e) => e.path));
+
+    const categoryColors: Record<string, string> = {
+      projects: '#5d8da8',
+      decisions: '#c2885c',
+      notes: '#7a9a6d',
+      workflows: '#9b7db8',
+      people: '#b85c5c',
+    };
+
+    const nodes = entries.map((e) => {
+      const cat = e.path.split('/')[0] || 'notes';
+      const score = scores.get(e.path);
+      const degree = allEdges.filter((ed) => ed.source === e.path || ed.target === e.path).length;
+      return {
+        id: e.path,
+        label: (e.title || e.path.split('/').pop()?.replace('.md', '') || e.path).slice(0, 40),
+        title: `${e.path}\nCategory: ${cat}\nEdges: ${degree}\nMaturity: ${score?.maturity ?? 'candidate'}`,
+        group: cat,
+        color: categoryColors[cat] || '#888',
+        size: Math.max(4, Math.min(16, 4 + degree * 2)),
+        maturity: score?.maturity ?? 'candidate',
+      };
+    });
+
+    const edges = allEdges.map((e) => ({
+      from: e.source,
+      to: e.target,
+      title: `${e.rel_type.replace(/_/g, ' ')} (strength: ${e.strength ?? 0.5})`,
+      rel_type: e.rel_type,
+      strength: e.strength ?? 0.5,
+      origin: e.origin ?? 'manual',
+    }));
+
+    json(res, { nodes, edges });
+  } catch (err) {
+    console.error('[knowledge] graph-data:', err instanceof Error ? err.message : err);
+    json(res, { nodes: [], edges: [] });
+  }
+};
+
 const knowledgeListRoute: RouteHandler = (req, res) => {
   const url = urlOf(req);
   const category = url.searchParams.get('category') || undefined;
@@ -468,6 +514,7 @@ export function startDashboard(port?: number): Promise<http.Server> {
   router.route('GET', '/api/knowledge/bridges', bridgesRoute);
   router.route('GET', '/api/knowledge/gaps', gapsRoute);
   router.route('GET', '/api/knowledge/brief', briefRoute);
+  router.route('GET', '/api/knowledge/graph-data', graphDataRoute);
   router.route('GET', '/api/knowledge', knowledgeListRoute);
   router.route('GET', '/api/knowledge/:entryPath/links', knowledgeLinksRoute);
   router.route('GET', '/api/knowledge/:entryPath', knowledgeEntryRoute);

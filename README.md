@@ -76,6 +76,18 @@ No configuration needed. Additional session roots can be added via the `EXTRA_SE
 - **Edge provenance** — graph edges track `origin` (manual, auto-link, distill, reflect) so analysis can distinguish user judgment from automated heuristics
 - **Deterministic pre-extraction in distillation** — session summaries now include git commits, error patterns, URLs accessed, and packages changed extracted via regex from bash/tool output (no LLM cost)
 
+## Codebase Ingestion
+
+The **knowledge-ingest** skill populates or updates the knowledge base from a codebase directory. It uses tree-sitter for zero-token structural extraction (classes, functions, imports, call graphs, rationale comments), then clusters files into subsystems and creates knowledge entries + graph edges via existing MCP tools. Subsequent runs are incremental — only changed files are reprocessed.
+
+```
+/knowledge-ingest ./my-project
+```
+
+Uses the [Agent Skills standard](https://agentskills.io) — works with Claude Code, OpenCode, Cursor, Codex CLI, and Gemini CLI. See [Ingestion Guide](docs/INGEST.md) for details.
+
+**Supported languages:** TypeScript, JavaScript, Python, Go, Rust, Java, C, C++.
+
 ## Quick Start
 
 ### Install from npm
@@ -313,7 +325,8 @@ npm run lint          # Type-check (tsc --noEmit)
 
 ## Documentation
 
-- [Setup Guide](docs/SETUP.md) — installation, client setup (Claude Code, OpenCode, Cursor, Windsurf), hooks
+- [Setup Guide](docs/SETUP.md) — installation, client setup (Claude Code, OpenCode, Cursor, Windsurf), hooks, skills
+- [Ingestion Guide](docs/INGEST.md) — codebase ingestion skill, tree-sitter extraction, incremental updates
 - [Architecture](docs/ARCHITECTURE.md) — source structure, design principles, database schema
 - [Dashboard](docs/DASHBOARD.md) — web UI views and features
 - [Changelog](CHANGELOG.md)

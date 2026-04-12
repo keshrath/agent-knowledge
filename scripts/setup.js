@@ -16,7 +16,7 @@
 // Usage: node scripts/setup.js [--agent claude|generic]
 // =============================================================================
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, statSync, cpSync, mkdirSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
@@ -134,6 +134,14 @@ addUnmatchedHook(
   5,
 );
 
+// SessionStart: knowledge-ingest freshness check
+addUnmatchedHook(
+  'SessionStart',
+  'session-start-ingest.mjs',
+  `node "${join(hookDir, 'session-start-ingest.mjs')}"`,
+  10,
+);
+
 // PreCompact: rich summary (library) + simple text distill (heuristic)
 addUnmatchedHook(
   'PreCompact',
@@ -158,6 +166,40 @@ addUnmatchedHook(
 
 writeFileSync(SETTINGS_JSON, JSON.stringify(settings, null, 2));
 console.log('  Saved settings.json');
+
+// ---------------------------------------------------------------------------
+// Install knowledge-ingest skill
+// ---------------------------------------------------------------------------
+
+console.log('Installing knowledge-ingest skill...');
+
+const skillSrc = join(PROJECT_DIR, 'skills', 'knowledge-ingest', 'SKILL.md');
+
+const skillDests = [
+  join(HOME, '.claude', 'skills', 'knowledge-ingest', 'SKILL.md'),
+  join(HOME, '.agents', 'skills', 'knowledge-ingest', 'SKILL.md'),
+];
+
+if (existsSync(skillSrc)) {
+  const srcMtime = statSync(skillSrc).mtimeMs;
+  for (const dest of skillDests) {
+    mkdirSync(dirname(dest), { recursive: true });
+    let shouldCopy = true;
+    if (existsSync(dest)) {
+      if (statSync(dest).mtimeMs >= srcMtime) {
+        shouldCopy = false;
+      }
+    }
+    if (shouldCopy) {
+      cpSync(skillSrc, dest);
+      console.log(`  Installed → ${dest}`);
+    } else {
+      console.log(`  Up to date → ${dest}`);
+    }
+  }
+} else {
+  console.log('  Warning: skills/knowledge-ingest/SKILL.md not found in repo');
+}
 
 console.log(`
 Setup complete!

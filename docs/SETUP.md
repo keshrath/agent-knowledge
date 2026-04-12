@@ -328,6 +328,38 @@ Add equivalent instructions to `.windsurfrules` in your project root.
 
 ---
 
+## Skills
+
+agent-knowledge ships a **knowledge-ingest** skill for bootstrapping or updating the knowledge base from a codebase. The skill follows the [Agent Skills standard](https://agentskills.io) (`SKILL.md` format) and works across multiple platforms.
+
+### Automatic installation
+
+`node scripts/setup.js` installs the skill to both `~/.claude/skills/` and `~/.agents/skills/`, covering all major platforms:
+
+| Platform    | Discovery path                           | Covered by setup.js |
+| ----------- | ---------------------------------------- | ------------------- |
+| Claude Code | `~/.claude/skills/`                      | Yes                 |
+| OpenCode    | `~/.claude/skills/`, `~/.agents/skills/` | Yes                 |
+| Cursor      | `~/.claude/skills/`, `~/.agents/skills/` | Yes                 |
+| Codex CLI   | `~/.agents/skills/`                      | Yes                 |
+| Gemini CLI  | `~/.agents/skills/`                      | Yes                 |
+
+### Manual installation
+
+Copy `skills/knowledge-ingest/SKILL.md` to any of these locations:
+
+```bash
+# Claude Code, OpenCode, Cursor
+~/.claude/skills/knowledge-ingest/SKILL.md
+
+# Codex CLI, Gemini CLI, OpenCode (universal)
+~/.agents/skills/knowledge-ingest/SKILL.md
+```
+
+See [Ingestion Guide](INGEST.md) for usage details, supported languages, and incremental updates.
+
+---
+
 ## Knowledge Base Setup
 
 The knowledge base is a git repository with categorized markdown files.

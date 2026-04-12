@@ -8,3 +8,7 @@ copyFileSync(
   join(root, 'node_modules', 'morphdom', 'dist', 'morphdom-umd.min.js'),
   join(root, 'dist', 'ui', 'morphdom.min.js'),
 );
+copyFileSync(
+  join(root, 'node_modules', 'vis-network', 'standalone', 'umd', 'vis-network.min.js'),
+  join(root, 'dist', 'ui', 'vis-network.min.js'),
+);

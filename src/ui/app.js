@@ -32,12 +32,14 @@
         knowledge: $('tab-knowledge'),
         search: $('tab-search'),
         sessions: $('tab-sessions'),
+        graph: $('tab-graph'),
         embeddings: $('tab-embeddings'),
       },
       views: {
         knowledge: $('view-knowledge'),
         search: $('view-search'),
         sessions: $('view-sessions'),
+        graph: $('view-graph'),
         embeddings: $('view-embeddings'),
       },
       knowledgeGrid: $('knowledge-grid'),
@@ -233,6 +235,10 @@
 
     if (name === 'knowledge' && state.knowledge.entries.length === 0) K.loadKnowledge(state, el);
     if (name === 'sessions' && state.sessions.list.length === 0) K.loadSessions(state, el);
+    if (name === 'graph') {
+      // vis.js needs the container to be visible and laid out before rendering
+      requestAnimationFrame(() => K.renderGraph(el));
+    }
     if (name === 'embeddings') K.loadEmbeddingStats(state, el);
   }
 
@@ -571,6 +577,7 @@
     K.initTheme();
     bindEvents();
     K.initSessionScroll(state, el);
+    if (K.setupGraphControls) K.setupGraphControls();
     wsConnect();
 
     // Restore tab from URL hash (standalone mode only)

@@ -5,6 +5,14 @@
 Layered architecture — single `server.ts` handles MCP tools, separate `dashboard.ts` for HTTP/WebSocket:
 
 ```
+scripts/
+  tree-sitter-extract.mjs  Standalone CLI for zero-token code structure extraction
+  tree-sitter-lang.mjs     Per-language tree-sitter query definitions (8 languages)
+  setup.js                 Automated setup wizard (MCP server + hooks + skill install)
+  hooks/                   Claude Code lifecycle hooks
+skills/
+  knowledge-ingest/
+    SKILL.md               Claude Code skill file
 src/
   server.ts             MCP server, 6 tool definitions, request routing
   dashboard.ts          HTTP + WebSocket server, REST API, file watcher

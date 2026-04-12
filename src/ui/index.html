@@ -13,7 +13,7 @@
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=3" />
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='13' cy='13' r='9' fill='none' stroke='%235d8da8' stroke-width='3'/><line x1='20' y1='20' x2='28' y2='28' stroke='%235d8da8' stroke-width='3' stroke-linecap='round'/><circle cx='13' cy='13' r='4' fill='%235d8da8' opacity='.3'/></svg>"
@@ -89,6 +89,17 @@
       >
         <span class="material-symbols-outlined tab-icon">history</span>
         Sessions
+      </button>
+      <button
+        id="tab-graph"
+        class="tab"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-graph"
+        data-view="graph"
+      >
+        <span class="material-symbols-outlined tab-icon">hub</span>
+        Graph
       </button>
       <button
         id="tab-embeddings"
@@ -305,6 +316,78 @@
           </div>
         </section>
 
+        <!-- ===== Graph Tab ===== -->
+        <section id="view-graph" class="view" role="tabpanel" aria-labelledby="tab-graph" hidden>
+          <div class="view-header">
+            <h2><span class="material-symbols-outlined view-icon">hub</span>Knowledge Graph</h2>
+            <div class="view-actions">
+              <button
+                id="btn-graph-orphans"
+                class="header-action-btn active"
+                title="Hide nodes with no connections"
+              >
+                <span class="material-symbols-outlined">filter_alt</span>Connected
+              </button>
+              <button
+                id="btn-graph-physics"
+                class="header-action-btn active"
+                title="Toggle physics simulation"
+              >
+                <span class="material-symbols-outlined">animation</span>Physics
+              </button>
+              <button id="btn-graph-fit" class="header-action-btn" title="Fit graph to view">
+                <span class="material-symbols-outlined">fit_screen</span>Fit
+              </button>
+            </div>
+          </div>
+          <div
+            class="filter-chips"
+            id="graph-edge-filters"
+            role="group"
+            aria-label="Filter by edge type"
+          >
+            <button class="chip active" data-edge-type="all">
+              <span class="material-symbols-outlined chip-icon">select_all</span>All
+            </button>
+            <button class="chip" data-edge-type="part_of">
+              <span class="material-symbols-outlined chip-icon">account_tree</span>part_of
+            </button>
+            <button class="chip" data-edge-type="depends_on">
+              <span class="material-symbols-outlined chip-icon">link</span>depends_on
+            </button>
+            <button class="chip" data-edge-type="related_to">
+              <span class="material-symbols-outlined chip-icon">hub</span>related_to
+            </button>
+            <button class="chip" data-edge-type="builds_on">
+              <span class="material-symbols-outlined chip-icon">layers</span>builds_on
+            </button>
+            <button class="chip" data-edge-type="supersedes">
+              <span class="material-symbols-outlined chip-icon">swap_horiz</span>supersedes
+            </button>
+          </div>
+          <div class="search-bar">
+            <span class="material-symbols-outlined search-input-icon">search</span>
+            <input
+              type="search"
+              id="graph-search-input"
+              class="search-input"
+              placeholder="Search graph nodes..."
+              autocomplete="off"
+              aria-label="Search graph nodes"
+            />
+          </div>
+          <div id="graph-legend" class="graph-legend"></div>
+          <div id="graph-container"></div>
+          <div id="graph-stats" class="graph-stats"></div>
+          <div id="graph-empty" class="empty-state hidden">
+            <span class="material-symbols-outlined empty-icon">hub</span>
+            <div class="empty-text">No graph data available</div>
+            <div class="empty-hint">
+              Create knowledge entries and link them to see the graph visualization
+            </div>
+          </div>
+        </section>
+
         <!-- ===== Embeddings Tab ===== -->
         <section
           id="view-embeddings"
@@ -364,12 +447,14 @@
       media="(prefers-color-scheme: dark)"
     />
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+    <script src="vis-network.min.js"></script>
     <script src="morphdom.min.js"></script>
-    <script src="ui-utils.js"></script>
-    <script src="render-knowledge.js"></script>
-    <script src="render-search.js"></script>
-    <script src="render-sessions.js"></script>
-    <script src="render-panel.js"></script>
-    <script src="app.js"></script>
+    <script src="ui-utils.js?v=3"></script>
+    <script src="render-knowledge.js?v=3"></script>
+    <script src="render-search.js?v=3"></script>
+    <script src="render-sessions.js?v=3"></script>
+    <script src="render-graph.js?v=3"></script>
+    <script src="render-panel.js?v=3"></script>
+    <script src="app.js?v=3"></script>
   </body>
 </html>

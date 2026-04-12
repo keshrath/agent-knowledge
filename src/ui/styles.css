@@ -1823,3 +1823,75 @@ h1 {
 .duplicate-warn {
   cursor: help;
 }
+
+/* ── Graph Tab ──────────────────────────────────────────────────────────── */
+
+.header-action-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.header-action-btn.active .material-symbols-outlined {
+  color: #fff;
+}
+
+.graph-stats {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 4px 0 8px 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-count {
+  opacity: 0.6;
+  font-size: 0.72rem;
+}
+
+.legend-separator {
+  display: inline-block;
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  margin: 0 4px;
+  align-self: center;
+}
+
+#graph-container {
+  width: 100%;
+  height: calc(100vh - 320px);
+  min-height: 300px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
