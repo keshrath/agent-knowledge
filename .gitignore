@@ -27,6 +27,7 @@ scripts/grammars/
 .knowledge-ingest-cache.json
 
 # --- Vendored UI bundles (copied from node_modules during build) -------------
+src/ui/morphdom.min.js
 src/ui/vis-network.min.js
 
 # --- OS / editor cruft -------------------------------------------------------
