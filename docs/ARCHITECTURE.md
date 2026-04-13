@@ -332,10 +332,11 @@ Levenshtein edit distance with two-row DP (O(n\*m) time, O(m) space). Fuzzy matc
 
 ### dashboard.ts
 
-Single HTTP server handles both REST API and static files:
+Single HTTP server handles REST API, write endpoint, and static files:
 
 - **Static serving**: resolves UI directory (checks `src/ui/` then `dist/ui/`), serves with MIME detection and CSP headers
-- **REST API**: routes for knowledge CRUD/search, session list/search/recall/get/summary, health
+- **REST API (GET)**: routes for knowledge search, session list/search/recall/get/summary, health, graph analysis
+- **REST API (POST)**: `POST /api/knowledge` — write entry with full pipeline (git pull, write, embed, auto-link, git push). POST restricted to `/api/` paths.
 - **WebSocket**: `ws` library with `noServer` mode, heartbeat every 30s, initial state snapshot on connect
 - **File watcher**: `fs.watch` on UI directory, debounced 200ms, broadcasts `{type: "reload"}` to all WS clients
 
@@ -413,17 +414,25 @@ sequenceDiagram
 
 ### Knowledge Write
 
+Two write paths exist — MCP (stdio) and REST (HTTP). Both run the same pipeline.
+
 ```mermaid
 sequenceDiagram
     participant C as Agent Session
     participant S as MCP Server
+    participant D as Dashboard (REST)
     participant G as Git
     participant F as File System
+    participant V as Vector Store
 
     C->>S: knowledge({ action: "write", category, filename, content })
+    Note over D: OR: POST /api/knowledge { category, filename, content }
     S->>G: git pull --rebase
     S->>F: Write markdown file
+    S->>V: Index embeddings + auto-link (cosine > 0.7)
     S->>G: git add -A && commit && push
     G-->>S: Push result
-    S-->>C: { path, git status }
+    S-->>C: { path, autoLinks, duplicateWarnings, git }
 ```
+
+The REST `POST /api/knowledge` endpoint enables HTTP-based writes from other services (e.g. agent-tasks KnowledgeBridge) without an MCP connection.

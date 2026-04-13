@@ -9,7 +9,14 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { createRouter, json, serveStatic, setupWebSocket, type RouteHandler } from 'agent-common';
+import {
+  createRouter,
+  json,
+  readBody,
+  serveStatic,
+  setupWebSocket,
+  type RouteHandler,
+} from 'agent-common';
 
 // ── Inline rate limiter ──────────────────────────────────────────────────────
 // agent-common no longer ships createRateLimiter; reproduce the minimal token
@@ -61,13 +68,22 @@ function createRateLimiter(opts: RateLimiterOptions) {
     },
   };
 }
-import { listEntries, readEntry } from './knowledge/store.js';
-import { searchKnowledge } from './knowledge/search.js';
+import { listEntries, readEntry, writeEntry } from './knowledge/store.js';
+import { searchKnowledge, invalidateKnowledgeIndexCache } from './knowledge/search.js';
 import { getEntryScoring, decayFactor, maturityMultiplier } from './knowledge/scoring.js';
 import { getKnowledgeGraph } from './knowledge/graph.js';
 import { consolidate } from './knowledge/consolidate.js';
 import { reflect } from './knowledge/reflect.js';
-import { godNodes, bridges, gaps, generateBrief } from './knowledge/analyze.js';
+import {
+  godNodes,
+  bridges,
+  gaps,
+  generateBrief,
+  invalidateBriefCache,
+} from './knowledge/analyze.js';
+import { gitPull, gitPush } from './knowledge/git.js';
+import { indexKnowledgeEntry } from './sessions/indexer.js';
+import { checkDuplicates } from './knowledge/consolidate.js';
 import {
   getProjectDirs,
   getSessionFiles,
@@ -498,6 +514,90 @@ const sessionDetailRoute: RouteHandler = (req, res, params) => {
   json(res, { error: `Session ${sessionId} not found` }, 404);
 };
 
+// ── Write endpoint ──────────────────────────────────────────────────────────
+// POST /api/knowledge — mirrors the MCP knowledge(action=write) pipeline:
+// writeEntry → index → auto-link → git push. Used by agent-tasks
+// KnowledgeBridge and other services that need HTTP-based writes.
+
+const knowledgeWriteRoute: RouteHandler = async (req, res) => {
+  const config = getConfig();
+  let body: Record<string, unknown>;
+  try {
+    body = await readBody(req, 1_048_576);
+  } catch (e) {
+    json(res, { error: e instanceof Error ? e.message : 'Bad request' }, 400);
+    return;
+  }
+
+  const category = typeof body.category === 'string' ? body.category.trim() : '';
+  const filename = typeof body.filename === 'string' ? body.filename.trim() : '';
+  const content = typeof body.content === 'string' ? body.content : '';
+
+  if (!category || !filename || !content) {
+    json(res, { error: 'Required fields: category, filename, content' }, 422);
+    return;
+  }
+
+  const CATEGORIES = new Set(['projects', 'people', 'decisions', 'workflows', 'notes']);
+  if (!CATEGORIES.has(category)) {
+    json(res, { error: `Invalid category. Must be one of: ${[...CATEGORIES].join(', ')}` }, 422);
+    return;
+  }
+
+  try {
+    await gitPull(config.memoryDir);
+    const filePath = writeEntry(config.memoryDir, category, filename, content);
+    invalidateKnowledgeIndexCache();
+    invalidateBriefCache();
+    const pushResult = await gitPush(config.memoryDir);
+
+    const autoLinks: Array<{ target: string; similarity: number }> = [];
+    try {
+      await indexKnowledgeEntry(filePath, content);
+      const { getEmbeddingProvider } = await import('./embeddings/index.js');
+      const provider = await getEmbeddingProvider();
+      if (provider) {
+        const queryVector = await provider.embedOne(content.slice(0, 2000));
+        const vecStore = new VectorStore();
+        const similar = vecStore.searchBySource(queryVector, 'knowledge', 4);
+        const graphStore = getKnowledgeGraph();
+        for (const hit of similar) {
+          if (hit.sourceId === filePath) continue;
+          if (hit.score > 0.7) {
+            graphStore.link(
+              filePath,
+              hit.sourceId,
+              'related_to',
+              hit.score,
+              null,
+              null,
+              'auto-link',
+            );
+            autoLinks.push({ target: hit.sourceId, similarity: Math.round(hit.score * 100) / 100 });
+          }
+          if (autoLinks.length >= 3) break;
+        }
+      }
+    } catch (linkErr) {
+      console.error('[knowledge] Auto-link failed:', linkErr);
+    }
+
+    let duplicateWarnings: Array<{ path: string; title: string; similarity: number }> = [];
+    try {
+      duplicateWarnings = checkDuplicates(config.memoryDir, filePath, content);
+    } catch (dupErr) {
+      console.error('[knowledge] Duplicate check failed:', dupErr);
+    }
+
+    const response: Record<string, unknown> = { path: filePath, git: pushResult };
+    if (autoLinks.length > 0) response.autoLinks = autoLinks;
+    if (duplicateWarnings.length > 0) response.duplicateWarnings = duplicateWarnings;
+    json(res, response, 201);
+  } catch (e) {
+    json(res, { error: e instanceof Error ? e.message : 'Write failed' }, 500);
+  }
+};
+
 // ── Server bootstrap ─────────────────────────────────────────────────────────
 
 export function startDashboard(port?: number): Promise<http.Server> {
@@ -523,10 +623,16 @@ export function startDashboard(port?: number): Promise<http.Server> {
   router.route('GET', '/api/sessions', sessionsListRoute);
   router.route('GET', '/api/sessions/:sessionId/summary', sessionSummaryRoute);
   router.route('GET', '/api/sessions/:sessionId', sessionDetailRoute);
+  router.route('POST', '/api/knowledge', knowledgeWriteRoute);
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
-      if (req.method !== 'GET' && req.method !== 'OPTIONS') {
+      const isPost = req.method === 'POST';
+      if (req.method !== 'GET' && !isPost && req.method !== 'OPTIONS') {
+        json(res, { error: 'Method not allowed' }, 405);
+        return;
+      }
+      if (isPost && !req.url?.startsWith('/api/')) {
         json(res, { error: 'Method not allowed' }, 405);
         return;
       }

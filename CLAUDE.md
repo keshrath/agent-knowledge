@@ -99,7 +99,7 @@ npm run dev        # watch mode (tsc --watch)
 ## Key APIs
 
 - **MCP** (6 tools): `knowledge` (actions: list/read/write/delete/sync), `knowledge_search` (general + scoped recall via `scope` param), `knowledge_session` (actions: list/get/summary), `knowledge_graph` (actions: link/unlink/list/traverse), `knowledge_analyze` (actions: consolidate/reflect/god_nodes/bridges/gaps/brief), `knowledge_admin` (actions: status/config/rebuild_embeddings)
-- **Dashboard**: HTTP + WebSocket at port 3423, REST API for entries/sessions/search
+- **Dashboard**: HTTP + WebSocket at port 3423, REST API for entries/sessions/search, `POST /api/knowledge` for HTTP-based writes (used by agent-tasks KnowledgeBridge)
 - **Git sync**: Auto pull/push on write, manual sync via `knowledge(action: 'sync')`
 
 ## Supported Session Sources

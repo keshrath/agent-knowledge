@@ -131,7 +131,37 @@ File watcher monitors `src/ui/` for `.html`, `.css`, `.js` changes. On change, b
 | GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall                |
 | GET    | `/api/sessions/:id`                     | Read session                 |
 | GET    | `/api/sessions/:id/summary`             | Session summary              |
+| POST   | `/api/knowledge`                        | Write entry (JSON body)      |
 | GET    | `/health`                               | Health check                 |
+
+### POST /api/knowledge
+
+Write a knowledge entry via REST. Runs the same pipeline as the MCP `knowledge(action: "write")` tool: git pull, file write, embedding index, auto-link (cosine > 0.7), git push, duplicate check.
+
+**Request:**
+
+```json
+{
+  "category": "decisions",
+  "filename": "my-entry.md",
+  "content": "---\ntitle: My Entry\ntags: [foo]\n---\n\nContent here."
+}
+```
+
+**Response (201):**
+
+```json
+{
+  "path": "decisions/my-entry.md",
+  "git": { "success": true, "message": "pushed" },
+  "autoLinks": [{ "target": "decisions/related.md", "similarity": 0.82 }],
+  "duplicateWarnings": []
+}
+```
+
+Valid categories: `projects`, `people`, `decisions`, `workflows`, `notes`. POST is restricted to `/api/` paths; non-API POST returns 405.
+
+Used by agent-tasks `KnowledgeBridge` to push learning/decision artifacts on task completion.
 
 ## WebSocket
 

@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",

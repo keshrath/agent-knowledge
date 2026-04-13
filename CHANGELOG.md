@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.2 (2026-04-13)
+
+### Added
+
+- **`POST /api/knowledge` REST endpoint** — write knowledge entries via HTTP. Runs the full MCP write pipeline: git pull, file write, embedding index, auto-link (cosine > 0.7), git push, duplicate check. Returns `{ path, autoLinks, duplicateWarnings, git }`. POST restricted to `/api/` paths; non-API POST still returns 405. Used by agent-tasks KnowledgeBridge to push learning/decision artifacts on task completion. 481/481 tests green.
+
 ## 1.5.2 (2026-04-11)
 
 ### Added
