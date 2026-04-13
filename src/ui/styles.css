@@ -1895,3 +1895,143 @@ h1 {
   border: 1px solid var(--border);
   background: var(--bg);
 }
+
+/* --------------------------------------------------------------------------
+   Mobile Responsive (768px)
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  header {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    gap: 6px;
+  }
+  .header-left {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .header-left h1 {
+    font-size: 14px;
+  }
+  .header-right {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .stats {
+    gap: 4px;
+  }
+  .stat-badge {
+    padding: 2px 6px;
+    font-size: 11px;
+  }
+  .tab-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    scrollbar-width: none;
+    gap: 0;
+    padding: 0 8px;
+  }
+  .tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .tab {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .view-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .view-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+  }
+  .header-action-btn {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+  .filter-chips {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .chip {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+  .search-controls {
+    gap: 8px;
+  }
+  .mode-toggle {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+  .content-wrapper.panel-open #side-panel {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    z-index: 200;
+    border-left: none;
+    box-shadow: none;
+  }
+  .content-wrapper.panel-open #content {
+    display: none;
+  }
+  .panel-body {
+    padding: 12px;
+  }
+  #graph-container {
+    height: calc(100vh - 380px);
+    min-height: 250px;
+  }
+  .graph-legend {
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 11px;
+  }
+  .embedding-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .sessions-list .session-card {
+    padding: 10px 12px;
+  }
+  .search-bar {
+    max-width: 100%;
+  }
+  .search-input {
+    max-width: 100%;
+  }
+  .view {
+    padding: 12px 8px;
+  }
+  .empty-state {
+    padding: 32px 16px;
+  }
+  .results-list {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .header-action-btn span:not(.material-symbols-outlined) {
+    display: none;
+  }
+  .stats {
+    display: none;
+  }
+  .tab {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .view-header h2 {
+    font-size: 16px;
+  }
+}
