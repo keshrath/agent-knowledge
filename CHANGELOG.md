@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.0 (2026-04-13)
+
+### Added
+
+- **Code structure edge types** — 3 new relationship types: `calls`, `imports`, `inherits` for code graph representation. Total: 11 relationship types.
+- **Directed BFS traversal** — `knowledge_graph(action: "traverse")` now supports `direction` (`outbound`, `inbound`, `both`) and `rel_type` filter. Enables "who calls X?" and "what does X call?" queries.
+- **`bulk_link` action** — batch-create edges in a single SQLite transaction. Designed for code graph ingestion where hundreds of edges are created at once. Self-references and invalid types silently skipped.
+- **`unlink_by_origin` action** — delete all edges matching a specific origin. Used to clear stale code graph edges before re-ingest (e.g. `tree-sitter:my-project`).
+- **`code:` node ID convention** — code files use `code:src/path.ts`, symbols use `code:src/path.ts::functionName`. Analysis functions (godNodes, bridges, gaps) exclude code nodes automatically.
+- **Input validation for `bulk_link`** — handler filters malformed edges (non-string source/target/rel_type) before passing to graph layer.
+
+### Fixed
+
+- **`gaps()` now excludes `code:` nodes** — consistent with `godNodes()` and `bridges()` which already filtered them.
+- **`USER-MANUAL.md`** — updated stale "8 relationship types" reference to 11.
+
 ## 1.6.3 (2026-04-13)
 
 ### Added

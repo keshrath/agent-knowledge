@@ -217,18 +217,26 @@ export function createServer(options?: ServerOptions): Server {
       {
         name: 'knowledge_graph',
         description:
-          'Knowledge graph operations with temporal validity: create/remove edges, ' +
-          'mark facts as no longer valid, list edges (optionally as-of a date), traverse via BFS. ' +
-          'Edges support valid_from/valid_to validity windows. ' +
-          'Relationship types: related_to, supersedes, depends_on, contradicts, specializes, part_of, alternative_to, builds_on.',
+          'Knowledge graph operations with temporal validity and code structure support. ' +
+          'Create/remove edges, traverse via directed BFS, bulk-import code graph edges. ' +
+          'Relationship types: related_to, supersedes, depends_on, contradicts, specializes, part_of, alternative_to, builds_on, calls, imports, inherits. ' +
+          'Code structure types (calls/imports/inherits) are created by knowledge-ingest and use "code:" prefixed node IDs.',
         inputSchema: {
           type: 'object' as const,
           properties: {
             action: {
               type: 'string',
-              enum: ['link', 'unlink', 'invalidate', 'list', 'traverse'],
+              enum: [
+                'link',
+                'unlink',
+                'invalidate',
+                'list',
+                'traverse',
+                'bulk_link',
+                'unlink_by_origin',
+              ],
               description:
-                'Action: link (create edge), unlink (remove edge), invalidate (set valid_to), list (list edges), traverse (BFS)',
+                'Action: link (create edge), unlink (remove edge), invalidate (set valid_to), list (list edges), traverse (directed BFS), bulk_link (batch-create edges), unlink_by_origin (delete all edges from a specific origin)',
             },
             source: {
               type: 'string',
@@ -272,6 +280,36 @@ export function createServer(options?: ServerOptions): Server {
               type: 'string',
               description:
                 'ISO date — only return edges valid at this date (action=list/traverse, optional)',
+            },
+            direction: {
+              type: 'string',
+              enum: ['outbound', 'inbound', 'both'],
+              description:
+                'Traversal direction (action=traverse, default: both). ' +
+                'outbound: follow source→target (what does X call?). ' +
+                'inbound: follow target→source (who calls X?). ' +
+                'both: undirected (default, preserves legacy behavior).',
+            },
+            edges: {
+              type: 'array',
+              description:
+                'Array of edges to create (action=bulk_link). Each: { source, target, rel_type, strength?, origin? }',
+              items: {
+                type: 'object',
+                properties: {
+                  source: { type: 'string' },
+                  target: { type: 'string' },
+                  rel_type: { type: 'string', enum: [...RELATIONSHIP_TYPES] },
+                  strength: { type: 'number' },
+                  origin: { type: 'string' },
+                },
+                required: ['source', 'target', 'rel_type'],
+              },
+            },
+            origin: {
+              type: 'string',
+              description:
+                'Edge origin to delete (action=unlink_by_origin). E.g. "tree-sitter" to clear code graph before re-ingest.',
             },
           },
           required: ['action'],

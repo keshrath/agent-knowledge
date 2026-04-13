@@ -102,7 +102,7 @@ Builds a TF-IDF index from all knowledge entries, searches with ranking, falls b
 
 ### graph.ts
 
-Manages typed, weighted edges between knowledge entries in a dedicated `edges` SQLite table.
+Manages typed, weighted edges between knowledge entries and code structure nodes in a dedicated `edges` SQLite table.
 
 **Schema**:
 
@@ -111,22 +111,66 @@ CREATE TABLE edges (
   source TEXT NOT NULL,
   target TEXT NOT NULL,
   rel_type TEXT NOT NULL,
-  strength REAL DEFAULT 1.0,
-  created TEXT NOT NULL,
+  strength REAL DEFAULT 0.5,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  valid_from TEXT,
+  valid_to TEXT,
+  origin TEXT DEFAULT 'manual',
   PRIMARY KEY (source, target, rel_type)
 );
 ```
 
-**8 relationship types**: `related_to`, `supersedes`, `depends_on`, `contradicts`, `specializes`, `part_of`, `alternative_to`, `builds_on`.
+**11 relationship types**:
+
+| Type             | Category  | Typical Use                             |
+| ---------------- | --------- | --------------------------------------- |
+| `related_to`     | Knowledge | General association (often auto-linked) |
+| `supersedes`     | Knowledge | Entry replaces an older one             |
+| `depends_on`     | Knowledge | Subsystem/entry depends on another      |
+| `contradicts`    | Knowledge | Entries with conflicting information    |
+| `specializes`    | Knowledge | More specific version of a concept      |
+| `part_of`        | Both      | Component belongs to a larger whole     |
+| `alternative_to` | Knowledge | Alternative approach or design          |
+| `builds_on`      | Knowledge | Extends or elaborates on another entry  |
+| `calls`          | Code      | Function A calls function B             |
+| `imports`        | Code      | File A imports from file B              |
+| `inherits`       | Code      | Class A extends/implements class B      |
+
+**Node ID conventions**:
+
+- Knowledge entries: `notes/my-project-auth.md` (standard paths)
+- Code files: `code:src/auth/middleware.ts`
+- Code symbols: `code:src/auth/middleware.ts::validateToken`
+
+The `code:` prefix distinguishes code graph nodes from knowledge entries. Analysis functions (godNodes, bridges, gaps) automatically exclude code nodes.
 
 **Operations**:
 
 - **link()** — upsert an edge (INSERT OR REPLACE), validates rel_type against allowed set
 - **unlink()** — delete edges, optionally filtered by rel_type
-- **links()** — list edges for a given entry or rel_type
-- **traverse()** — BFS from a starting entry to configurable depth, returns nodes and edges visited
+- **invalidate()** — set `valid_to` to mark edges as expired without deleting
+- **links()** — list edges for a given entry or rel_type, with optional `asOf` temporal filter
+- **graph()** — BFS traversal from a starting entry to configurable depth. Supports:
+  - `direction`: `outbound` (source→target), `inbound` (target→source), `both` (default)
+  - `relType`: only follow edges of a specific relationship type
+  - `asOf`: temporal filter — only edges valid at this date are followed
+- **bulkLink()** — batch-create edges in a single SQLite transaction. Designed for code graph ingestion where hundreds of edges are created at once. Self-references and invalid types are silently skipped.
+- **unlinkByOrigin()** — delete all edges with a specific origin. Used to clear stale code graph edges before re-ingesting (e.g. `unlinkByOrigin('tree-sitter:my-project')`).
 
-All four operations are exposed via the single `knowledge_graph` tool with an `action` parameter (`link`, `unlink`, `list`, `traverse`).
+All operations are exposed via the single `knowledge_graph` tool with an `action` parameter.
+
+**Directed traversal** enables code graph queries:
+
+```
+# Who calls validateToken? (inbound traversal)
+knowledge_graph({ action: "traverse", entry: "code:src/auth.ts::validateToken", direction: "inbound", rel_type: "calls", depth: 3 })
+
+# What does validateToken call? (outbound traversal)
+knowledge_graph({ action: "traverse", entry: "code:src/auth.ts::validateToken", direction: "outbound", rel_type: "calls", depth: 3 })
+
+# Combined: callers AND knowledge context (undirected, all edge types)
+knowledge_graph({ action: "traverse", entry: "code:src/auth.ts::validateToken", depth: 2 })
+```
 
 **Auto-linking**: On `knowledge { action: "write" }`, the top-3 most similar existing entries are found via cosine similarity against the vector store. Entries with similarity > 0.7 get automatic `related_to` edges created.
 

@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { KnowledgeGraph, RELATIONSHIP_TYPES, isEdgeValidAt } from '../src/knowledge/graph.js';
+import {
+  KnowledgeGraph,
+  RELATIONSHIP_TYPES,
+  isEdgeValidAt,
+  type RelationshipType,
+} from '../src/knowledge/graph.js';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-graph-test-'));
@@ -187,8 +192,139 @@ describe('KnowledgeGraph', () => {
   });
 
   describe('RELATIONSHIP_TYPES', () => {
-    it('contains all expected types', () => {
-      expect(RELATIONSHIP_TYPES.length).toBe(8);
+    it('contains all expected types including code structure', () => {
+      expect(RELATIONSHIP_TYPES.length).toBe(11);
+      expect(RELATIONSHIP_TYPES).toContain('calls');
+      expect(RELATIONSHIP_TYPES).toContain('imports');
+      expect(RELATIONSHIP_TYPES).toContain('inherits');
+    });
+  });
+
+  describe('directed traversal', () => {
+    it('outbound follows source→target only', () => {
+      graph.link('a.md', 'b.md', 'calls');
+      graph.link('c.md', 'a.md', 'calls');
+      const result = graph.graph('a.md', 5, undefined, 'outbound');
+      const paths = result.nodes.map((n) => n.path).sort();
+      expect(paths).toEqual(['a.md', 'b.md']); // c.md not reached (inbound edge)
+    });
+
+    it('inbound follows target→source only', () => {
+      graph.link('a.md', 'b.md', 'calls');
+      graph.link('c.md', 'a.md', 'calls');
+      const result = graph.graph('a.md', 5, undefined, 'inbound');
+      const paths = result.nodes.map((n) => n.path).sort();
+      expect(paths).toEqual(['a.md', 'c.md']); // b.md not reached (outbound edge)
+    });
+
+    it('both follows edges in either direction (default)', () => {
+      graph.link('a.md', 'b.md', 'calls');
+      graph.link('c.md', 'a.md', 'calls');
+      const result = graph.graph('a.md', 5);
+      expect(result.nodes.length).toBe(3);
+    });
+
+    it('multi-hop directed traversal', () => {
+      graph.link('a.md', 'b.md', 'calls');
+      graph.link('b.md', 'c.md', 'calls');
+      graph.link('c.md', 'd.md', 'calls');
+      const result = graph.graph('a.md', 3, undefined, 'outbound');
+      const paths = result.nodes.map((n) => n.path).sort();
+      expect(paths).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
+    });
+
+    it('inbound multi-hop (impact analysis: who depends on me?)', () => {
+      graph.link('a.md', 'c.md', 'calls');
+      graph.link('b.md', 'c.md', 'calls');
+      graph.link('d.md', 'a.md', 'calls');
+      const result = graph.graph('c.md', 3, undefined, 'inbound');
+      const paths = result.nodes.map((n) => n.path).sort();
+      expect(paths).toEqual(['a.md', 'b.md', 'c.md', 'd.md']);
+    });
+  });
+
+  describe('rel_type filter on traverse', () => {
+    it('filters edges by rel_type during traversal', () => {
+      graph.link('a.md', 'b.md', 'calls');
+      graph.link('a.md', 'c.md', 'related_to');
+      const result = graph.graph('a.md', 5, undefined, 'both', 'calls');
+      const paths = result.nodes.map((n) => n.path).sort();
+      expect(paths).toEqual(['a.md', 'b.md']); // c.md not reached (wrong rel_type)
+    });
+
+    it('combines direction and rel_type filter', () => {
+      graph.link('a.md', 'b.md', 'calls');
+      graph.link('c.md', 'a.md', 'calls');
+      graph.link('a.md', 'd.md', 'imports');
+      const result = graph.graph('a.md', 5, undefined, 'outbound', 'calls');
+      const paths = result.nodes.map((n) => n.path).sort();
+      expect(paths).toEqual(['a.md', 'b.md']); // c.md (inbound) and d.md (wrong type) excluded
+    });
+  });
+
+  describe('bulkLink', () => {
+    it('creates multiple edges in a transaction', () => {
+      const count = graph.bulkLink([
+        { source: 'a.md', target: 'b.md', rel_type: 'calls' },
+        { source: 'b.md', target: 'c.md', rel_type: 'calls' },
+        { source: 'a.md', target: 'c.md', rel_type: 'imports' },
+      ]);
+      expect(count).toBe(3);
+      expect(graph.links().length).toBe(3);
+    });
+
+    it('skips self-referencing edges', () => {
+      const count = graph.bulkLink([
+        { source: 'a.md', target: 'a.md', rel_type: 'calls' },
+        { source: 'a.md', target: 'b.md', rel_type: 'calls' },
+      ]);
+      expect(count).toBe(1);
+    });
+
+    it('skips invalid rel_types', () => {
+      const count = graph.bulkLink([
+        { source: 'a.md', target: 'b.md', rel_type: 'invalid' as unknown as RelationshipType },
+        { source: 'a.md', target: 'c.md', rel_type: 'calls' },
+      ]);
+      expect(count).toBe(1);
+    });
+
+    it('uses tree-sitter as default origin', () => {
+      graph.bulkLink([{ source: 'a.md', target: 'b.md', rel_type: 'calls' }]);
+      const edges = graph.links('a.md');
+      expect(edges[0].origin).toBe('tree-sitter');
+    });
+
+    it('allows custom origin', () => {
+      graph.bulkLink([{ source: 'a.md', target: 'b.md', rel_type: 'calls', origin: 'custom' }]);
+      const edges = graph.links('a.md');
+      expect(edges[0].origin).toBe('custom');
+    });
+
+    it('handles empty array', () => {
+      const count = graph.bulkLink([]);
+      expect(count).toBe(0);
+    });
+  });
+
+  describe('unlinkByOrigin', () => {
+    it('deletes all edges with matching origin', () => {
+      graph.bulkLink([
+        { source: 'a.md', target: 'b.md', rel_type: 'calls' },
+        { source: 'b.md', target: 'c.md', rel_type: 'imports' },
+      ]);
+      graph.link('a.md', 'c.md', 'related_to'); // default origin: 'manual'
+      expect(graph.links().length).toBe(3);
+      const removed = graph.unlinkByOrigin('tree-sitter');
+      expect(removed).toBe(2);
+      expect(graph.links().length).toBe(1);
+      expect(graph.links()[0].rel_type).toBe('related_to');
+    });
+
+    it('returns 0 when no matching origin', () => {
+      graph.link('a.md', 'b.md', 'related_to');
+      const removed = graph.unlinkByOrigin('tree-sitter');
+      expect(removed).toBe(0);
     });
   });
 

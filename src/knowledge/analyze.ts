@@ -80,9 +80,9 @@ export function godNodes(dir: string, topN: number = 10): GodNode[] {
     entryMap.set(e.path, e);
   }
 
-  // Sort by degree, filter out pure auto-link nodes
+  // Sort by degree, filter out pure auto-link nodes and code graph nodes
   const sorted = Array.from(degree.entries())
-    .filter(([path]) => entryMap.has(path))
+    .filter(([path]) => entryMap.has(path) && !path.startsWith('code:'))
     .sort((a, b) => b[1] - a[1]);
 
   const result: GodNode[] = [];
@@ -187,9 +187,9 @@ export function bridges(dir: string, topN: number = 5): Bridge[] {
   const entryMap = new Map<string, KnowledgeEntry>();
   for (const e of entries) entryMap.set(e.path, e);
 
-  // Sort by betweenness, find what they connect
+  // Sort by betweenness, find what they connect (exclude code graph nodes)
   const sorted = Array.from(betweenness.entries())
-    .filter(([path]) => entryMap.has(path))
+    .filter(([path]) => entryMap.has(path) && !path.startsWith('code:'))
     .filter(([, score]) => score > 0)
     .sort((a, b) => b[1] - a[1]);
 
@@ -243,6 +243,7 @@ export function gaps(dir: string, maxEntries: number = 30): Gap[] {
   const result: Gap[] = [];
 
   for (const entry of entries) {
+    if (entry.path.startsWith('code:')) continue;
     const deg = degree.get(entry.path) ?? 0;
     if (deg > 1) continue;
 

@@ -26,7 +26,7 @@ agent-knowledge is an MCP (Model Context Protocol) server that provides cross-se
 - **Hybrid search** -- combines semantic vector similarity (via embeddings) with TF-IDF scoring for accurate retrieval.
 - **Session search** -- search across past AI coding sessions from Claude Code, Cursor, and OpenCode.
 - **Scoped recall** -- targeted search within domains: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`.
-- **Knowledge graph** -- typed edges between entries (8 relationship types) with BFS traversal.
+- **Knowledge graph** -- typed edges between entries (11 relationship types including code structure) with directed BFS traversal.
 - **Confidence scoring** -- entries gain maturity (`candidate` > `established` > `proven`) based on access frequency.
 - **Auto-linking** -- new entries are automatically linked to similar existing entries via cosine similarity.
 - **Duplicate detection** -- warns when writing entries that are similar to existing ones.

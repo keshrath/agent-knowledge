@@ -24,6 +24,9 @@ export const RELATIONSHIP_TYPES = [
   'part_of',
   'alternative_to',
   'builds_on',
+  'calls',
+  'imports',
+  'inherits',
 ] as const;
 
 export type RelationshipType = (typeof RELATIONSHIP_TYPES)[number];
@@ -38,7 +41,7 @@ export interface Edge {
   valid_from: string | null;
   /** ISO date when this fact stopped being true. Null = still valid. */
   valid_to: string | null;
-  origin: string; // 'manual' | 'auto-link' | 'distill' | 'reflect'
+  origin: string; // 'manual' | 'auto-link' | 'distill' | 'reflect' | 'tree-sitter'
 }
 
 /** Returns true if the edge is valid at the given ISO date (or now). */
@@ -53,6 +56,8 @@ export interface GraphNode {
   path: string;
   depth: number;
 }
+
+export type TraverseDirection = 'outbound' | 'inbound' | 'both';
 
 export interface GraphResult {
   nodes: GraphNode[];
@@ -260,10 +265,20 @@ export class KnowledgeGraph {
 
   /**
    * BFS traversal from a starting entry, returning all nodes and edges
-   * within `depth` hops. If `asOf` is set, only edges valid at that date
-   * are followed.
+   * within `depth` hops.
+   *
+   * @param direction - `outbound` follows source→target only, `inbound` follows
+   *   target→source only, `both` (default) follows edges in either direction.
+   * @param relType - if set, only follow edges of this relationship type.
+   * @param asOf - if set, only edges valid at that date are followed.
    */
-  graph(entry: string, depth: number = 2, asOf?: string): GraphResult {
+  graph(
+    entry: string,
+    depth: number = 2,
+    asOf?: string,
+    direction: TraverseDirection = 'both',
+    relType?: RelationshipType,
+  ): GraphResult {
     this.init();
     if (!this.db) return { nodes: [], edges: [] };
 
@@ -277,11 +292,26 @@ export class KnowledgeGraph {
       const item = queue.shift()!;
       if (item.currentDepth >= depth) continue;
 
-      const allEdges = this.db
-        .prepare('SELECT * FROM edges WHERE source = ? OR target = ?')
-        .all(item.path, item.path) as Edge[];
+      // Query edges based on direction
+      let rawEdges: Edge[];
+      if (direction === 'outbound') {
+        rawEdges = this.db.prepare('SELECT * FROM edges WHERE source = ?').all(item.path) as Edge[];
+      } else if (direction === 'inbound') {
+        rawEdges = this.db.prepare('SELECT * FROM edges WHERE target = ?').all(item.path) as Edge[];
+      } else {
+        rawEdges = this.db
+          .prepare('SELECT * FROM edges WHERE source = ? OR target = ?')
+          .all(item.path, item.path) as Edge[];
+      }
 
-      const edges = asOf !== undefined ? allEdges.filter((e) => isEdgeValidAt(e, asOf)) : allEdges;
+      // Apply filters
+      let edges = rawEdges;
+      if (relType) {
+        edges = edges.filter((e) => e.rel_type === relType);
+      }
+      if (asOf !== undefined) {
+        edges = edges.filter((e) => isEdgeValidAt(e, asOf));
+      }
 
       for (const edge of edges) {
         const isDuplicate = resultEdges.some(
@@ -292,7 +322,16 @@ export class KnowledgeGraph {
           resultEdges.push(edge);
         }
 
-        const neighbor = edge.source === item.path ? edge.target : edge.source;
+        // Determine neighbor based on direction
+        let neighbor: string;
+        if (direction === 'outbound') {
+          neighbor = edge.target;
+        } else if (direction === 'inbound') {
+          neighbor = edge.source;
+        } else {
+          neighbor = edge.source === item.path ? edge.target : edge.source;
+        }
+
         if (!visited.has(neighbor)) {
           const neighborDepth = item.currentDepth + 1;
           visited.set(neighbor, neighborDepth);
@@ -325,6 +364,62 @@ export class KnowledgeGraph {
       rel_type: e.rel_type,
       strength: e.strength,
     }));
+  }
+
+  /**
+   * Bulk-create edges in a single transaction. Efficient for ingesting
+   * code structure (call graphs, imports, inheritance) where hundreds of
+   * edges are created at once.
+   *
+   * Edges that would be self-referencing are silently skipped.
+   * Returns the number of edges created/updated.
+   */
+  bulkLink(
+    edges: Array<{
+      source: string;
+      target: string;
+      rel_type: RelationshipType;
+      strength?: number;
+      origin?: string;
+    }>,
+  ): number {
+    this.init();
+    if (!this.db) throw new Error('Graph database not available');
+
+    // ON CONFLICT intentionally only updates strength + origin (not valid_from/valid_to)
+    // because code structure edges don't use temporal validity windows.
+    const stmt = this.db.prepare(
+      `INSERT INTO edges (source, target, rel_type, strength, origin)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(source, target, rel_type)
+       DO UPDATE SET strength = excluded.strength, origin = excluded.origin`,
+    );
+
+    let count = 0;
+    const run = this.db.transaction(() => {
+      for (const edge of edges) {
+        if (edge.source === edge.target) continue;
+        if (!RELATIONSHIP_TYPES.includes(edge.rel_type)) continue;
+        const strength = edge.strength ?? 0.5;
+        if (strength < 0 || strength > 1) continue;
+        stmt.run(edge.source, edge.target, edge.rel_type, strength, edge.origin ?? 'tree-sitter');
+        count++;
+      }
+    });
+    run();
+
+    return count;
+  }
+
+  /**
+   * Delete all edges matching a given origin. Useful for clearing stale
+   * code graph edges before re-ingesting.
+   */
+  unlinkByOrigin(origin: string): number {
+    this.init();
+    if (!this.db) throw new Error('Graph database not available');
+    const result = this.db.prepare('DELETE FROM edges WHERE origin = ?').run(origin);
+    return result.changes;
   }
 
   /** Close the database connection. */

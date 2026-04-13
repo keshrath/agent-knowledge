@@ -98,7 +98,7 @@ npm run dev        # watch mode (tsc --watch)
 
 ## Key APIs
 
-- **MCP** (6 tools): `knowledge` (actions: list/read/write/delete/sync), `knowledge_search` (general + scoped recall via `scope` param), `knowledge_session` (actions: list/get/summary), `knowledge_graph` (actions: link/unlink/list/traverse), `knowledge_analyze` (actions: consolidate/reflect/god_nodes/bridges/gaps/brief), `knowledge_admin` (actions: status/config/rebuild_embeddings)
+- **MCP** (6 tools): `knowledge` (actions: list/read/write/delete/sync), `knowledge_search` (general + scoped recall via `scope` param), `knowledge_session` (actions: list/get/summary), `knowledge_graph` (actions: link/unlink/invalidate/list/traverse/bulk_link/unlink_by_origin), `knowledge_analyze` (actions: consolidate/reflect/god_nodes/bridges/gaps/brief), `knowledge_admin` (actions: status/config/rebuild_embeddings)
 - **Dashboard**: HTTP + WebSocket at port 3423, REST API for entries/sessions/search, `POST /api/knowledge` for HTTP-based writes (used by agent-tasks KnowledgeBridge)
 - **Git sync**: Auto pull/push on write, manual sync via `knowledge(action: 'sync')`
 
@@ -118,7 +118,7 @@ Additional roots: `EXTRA_SESSION_ROOTS` env var (comma-separated). New tools: im
 - Categories: `projects`, `people`, `decisions`, `workflows`, `notes`
 - Search: hybrid semantic (embeddings) + TF-IDF with fuzzy fallback
 - Session search scopes: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`
-- Knowledge graph: typed edges between entries (8 relationship types), BFS traversal via `knowledge_graph`
+- Knowledge graph: typed edges between entries (11 relationship types including calls/imports/inherits for code structure), directed BFS traversal via `knowledge_graph` (outbound/inbound/both), bulk_link for batch ingestion, unlink_by_origin for stale edge cleanup
 - Confidence/decay scoring: search ranking weighted by access frequency and recency (candidate->established->proven)
 - Auto-linking: `knowledge` with `action: "write"` auto-creates `related_to` edges for top-3 similar entries (cosine > 0.7)
 - Confidence tagging: entries have optional `confidence: extracted|inferred` frontmatter; inferred entries get 0.85× search ranking

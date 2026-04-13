@@ -27,6 +27,8 @@ Codebase → tree-sitter AST → clusters → knowledge entries + graph edges
 
 **Phase 4 — Graph edges**: Subsystem relationships mapped via `knowledge_graph({ action: "link" })` — `part_of`, `depends_on`, `builds_on`. Auto-linking adds `related_to` edges automatically.
 
+**Phase 4b — Code graph edges**: Call, import, and inheritance edges extracted from the tree-sitter data and created via `knowledge_graph({ action: "bulk_link" })`. Uses `code:` prefixed node IDs (e.g. `code:src/auth.ts::validateToken`). Stale edges from previous ingests are cleared first via `unlink_by_origin`. Cross-reference edges link code files to their knowledge subsystem entries.
+
 **Phase 5 — Multi-modal**: PDFs, architecture diagrams, and URLs are processed if present.
 
 ## Prerequisites
@@ -167,6 +169,62 @@ node scripts/tree-sitter-extract.mjs ./project --exclude "test,mock,generated,ve
 ### Large codebases
 
 The `--max-files` flag (default 2000) caps how many files are processed, prioritizing the most recently modified. For very large repos, the agent also caps at 30 clusters and merges smaller ones.
+
+## Code Graph
+
+Starting with v1.7.0, `knowledge-ingest` creates code structure edges in the knowledge graph alongside knowledge entries. These edges enable code navigation queries via the existing `knowledge_graph` tool — no additional MCP tools needed.
+
+### Edge Types
+
+| Type       | Source                | Target                     | Example                                                |
+| ---------- | --------------------- | -------------------------- | ------------------------------------------------------ |
+| `calls`    | `code:file::caller`   | `code:file::callee`        | `code:src/auth.ts::validate` → `code:src/db.ts::query` |
+| `imports`  | `code:importing-file` | `code:imported-file`       | `code:src/auth.ts` → `code:src/db.ts`                  |
+| `inherits` | `code:file::subclass` | `code:file::superclass`    | `code:src/admin.ts::Admin` → `code:src/user.ts::User`  |
+| `part_of`  | `code:file`           | `notes/project-cluster.md` | Links code files to their knowledge subsystem entry    |
+
+### Node ID Convention
+
+- **Code files**: `code:src/auth/middleware.ts` (relative path prefixed with `code:`)
+- **Code symbols**: `code:src/auth/middleware.ts::validateToken` (file + `::` + symbol name)
+- **Module-level calls**: `code:src/index.ts` (no `::` suffix — the call is at file scope)
+
+### Querying the Code Graph
+
+Use `knowledge_graph(action: "traverse")` with the `direction` and `rel_type` parameters:
+
+```
+# Who calls this function? (impact analysis)
+knowledge_graph({
+  action: "traverse",
+  entry: "code:src/auth.ts::validateToken",
+  direction: "inbound",
+  rel_type: "calls",
+  depth: 5
+})
+
+# What does this function call? (dependency analysis)
+knowledge_graph({
+  action: "traverse",
+  entry: "code:src/auth.ts::validateToken",
+  direction: "outbound",
+  rel_type: "calls",
+  depth: 3
+})
+
+# Combined: code callers + knowledge decisions (undirected, all types)
+knowledge_graph({
+  action: "traverse",
+  entry: "code:src/auth.ts::validateToken",
+  depth: 2
+})
+```
+
+The combined query (no direction/rel_type filter) follows both `calls` edges to code callers AND `part_of`/`related_to` edges to knowledge entries — giving you "who calls this AND what design decisions exist about it" in one query.
+
+### Re-ingest Behavior
+
+On re-ingest, all code edges from the previous ingest are cleared via `unlink_by_origin` before creating new ones. Each project uses a unique origin (`tree-sitter:<project-name>`) so re-ingesting one project doesn't affect another's edges.
 
 ## Installation
 

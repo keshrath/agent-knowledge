@@ -571,13 +571,66 @@ export function handleKnowledgeGraphConsolidated(args: Record<string, unknown>):
       const entry = requireString(a, 'entry');
       const depth = optionalNumber(a, 'depth', 1, 10) ?? 2;
       const asOf = optionalString(a, 'as_of');
+      const direction = (optionalString(a, 'direction') ?? 'both') as
+        | 'outbound'
+        | 'inbound'
+        | 'both';
+      if (!['outbound', 'inbound', 'both'].includes(direction)) {
+        return err('direction must be one of: outbound, inbound, both');
+      }
+      const relType = validateEnum(
+        optionalString(a, 'rel_type'),
+        RELATIONSHIP_TYPES,
+        'rel_type',
+      ) as RelationshipType | undefined;
       const graphStore = getKnowledgeGraph();
-      const graphResult = graphStore.graph(entry, depth, asOf);
+      const graphResult = graphStore.graph(entry, depth, asOf, direction, relType);
       return ok(graphResult);
+    }
+    case 'bulk_link': {
+      const edges = a['edges'];
+      if (!Array.isArray(edges)) {
+        return err('bulk_link requires an "edges" array');
+      }
+      const validEdges = edges.filter(
+        (
+          e: unknown,
+        ): e is {
+          source: string;
+          target: string;
+          rel_type: string;
+          strength?: number;
+          origin?: string;
+        } =>
+          typeof e === 'object' &&
+          e !== null &&
+          typeof (e as Record<string, unknown>).source === 'string' &&
+          typeof (e as Record<string, unknown>).target === 'string' &&
+          typeof (e as Record<string, unknown>).rel_type === 'string',
+      );
+      const graphStore = getKnowledgeGraph();
+      const count = graphStore.bulkLink(
+        validEdges as Array<{
+          source: string;
+          target: string;
+          rel_type: RelationshipType;
+          strength?: number;
+          origin?: string;
+        }>,
+      );
+      invalidateBriefCache();
+      return ok({ created: count });
+    }
+    case 'unlink_by_origin': {
+      const origin = requireString(a, 'origin');
+      const graphStore = getKnowledgeGraph();
+      const removed = graphStore.unlinkByOrigin(origin);
+      invalidateBriefCache();
+      return ok({ removed });
     }
     default:
       return err(
-        `Unknown action: ${action}. Valid actions: link, unlink, invalidate, list, traverse`,
+        `Unknown action: ${action}. Valid actions: link, unlink, invalidate, list, traverse, bulk_link, unlink_by_origin`,
       );
   }
 }

@@ -57,6 +57,7 @@ No configuration needed. Additional session roots can be added via the `EXTRA_SE
 - **6 search scopes** -- errors, plans, configs, tools, files, decisions
 - **6 MCP tools** -- consolidated action-based interface (knowledge, knowledge_search, knowledge_session, knowledge_graph, knowledge_analyze, knowledge_admin)
 - **Wakeup context (L0+L1)** -- `knowledge` action `wakeup` returns a token-budgeted identity + top-weight entries blob for session-start hydration
+- **Code graph resolution** -- `calls`, `imports`, `inherits` edge types for code structure; directed BFS traversal (`outbound`/`inbound`/`both`); `bulk_link` for efficient ingestion; `unlink_by_origin` for clearing stale code edges before re-ingest; `code:` prefixed node IDs distinguish code from knowledge
 - **Temporal knowledge graph** -- edges support `valid_from` / `valid_to` validity windows; `as_of` queries return point-in-time snapshots; `invalidate` action marks facts as ended without deleting them
 - **Hybrid scoring boosts** -- proper-noun and temporal-proximity boosts on top of TF-IDF + semantic blend, capped at +66.7%, short-circuit when no signals are present
 - **Category as boost (not filter)** -- opt into `category_mode: "boost"` so a wrong category guess down-ranks instead of discarding the right answer
@@ -160,14 +161,20 @@ Scopes: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`.
 
 ### Knowledge Graph
 
-| Tool              | Action     | Description                        | Parameters                                  |
-| ----------------- | ---------- | ---------------------------------- | ------------------------------------------- |
-| `knowledge_graph` | `link`     | Create/update edge between entries | `source`, `target`, `rel_type`, `strength?` |
-|                   | `unlink`   | Remove edges between entries       | `source`, `target`, `rel_type?`             |
-|                   | `list`     | List edges                         | `entry?`, `rel_type?`                       |
-|                   | `traverse` | BFS traversal from an entry        | `entry`, `depth?`                           |
+| Tool              | Action             | Description                               | Parameters                                                        |
+| ----------------- | ------------------ | ----------------------------------------- | ----------------------------------------------------------------- |
+| `knowledge_graph` | `link`             | Create/update edge between entries        | `source`, `target`, `rel_type`, `strength?`                       |
+|                   | `unlink`           | Remove edges between entries              | `source`, `target`, `rel_type?`                                   |
+|                   | `invalidate`       | Mark edges as expired (set valid_to)      | `source`, `target`, `rel_type?`, `valid_to?`                      |
+|                   | `list`             | List edges                                | `entry?`, `rel_type?`, `as_of?`                                   |
+|                   | `traverse`         | Directed BFS traversal from an entry      | `entry`, `depth?`, `direction?`, `rel_type?`, `as_of?`            |
+|                   | `bulk_link`        | Batch-create edges (code graph ingestion) | `edges` (array of {source, target, rel_type, strength?, origin?}) |
+|                   | `unlink_by_origin` | Delete all edges by origin                | `origin`                                                          |
 
-Relationship types: `related_to`, `supersedes`, `depends_on`, `contradicts`, `specializes`, `part_of`, `alternative_to`, `builds_on`.
+**Knowledge types**: `related_to`, `supersedes`, `depends_on`, `contradicts`, `specializes`, `part_of`, `alternative_to`, `builds_on`
+**Code structure types**: `calls`, `imports`, `inherits`
+
+**Traverse directions**: `outbound` (source→target), `inbound` (target→source), `both` (default, undirected)
 
 ### Analysis
 
@@ -254,12 +261,39 @@ graph LR
 
 ## Knowledge Graph
 
-Entries can be connected via typed, weighted edges stored in a dedicated `edges` SQLite table. Eight relationship types are supported: `related_to`, `supersedes`, `depends_on`, `contradicts`, `specializes`, `part_of`, `alternative_to`, `builds_on`.
+Entries and code symbols can be connected via typed, weighted edges stored in a dedicated `edges` SQLite table. Eleven relationship types are supported — 8 for knowledge edges and 3 for code structure:
+
+**Knowledge**: `related_to`, `supersedes`, `depends_on`, `contradicts`, `specializes`, `part_of`, `alternative_to`, `builds_on`
+**Code structure**: `calls`, `imports`, `inherits`
 
 - **`knowledge_graph(action: "link")`** creates or updates an edge (with optional strength 0-1)
 - **`knowledge_graph(action: "unlink")`** removes edges (optionally filtered by type)
 - **`knowledge_graph(action: "list")`** lists edges for an entry or relationship type
-- **`knowledge_graph(action: "traverse")`** performs BFS traversal from a starting entry to a configurable depth
+- **`knowledge_graph(action: "traverse")`** performs directed BFS traversal from a starting entry. Supports `direction` (`outbound`, `inbound`, `both`) and `rel_type` filter
+- **`knowledge_graph(action: "bulk_link")`** batch-creates edges in a single transaction (for code graph ingestion)
+- **`knowledge_graph(action: "unlink_by_origin")`** deletes all edges with a specific origin (for clearing stale code edges before re-ingest)
+
+### Code Graph
+
+Code structure edges are created by the `knowledge-ingest` skill during codebase ingestion. They use `code:` prefixed node IDs:
+
+```
+code:src/auth/middleware.ts                    # file node
+code:src/auth/middleware.ts::validateToken      # symbol node
+```
+
+Query examples:
+
+```
+# Who calls validateToken?
+knowledge_graph({ action: "traverse", entry: "code:src/auth.ts::validateToken", direction: "inbound", rel_type: "calls", depth: 3 })
+
+# What breaks if I change this function?
+knowledge_graph({ action: "traverse", entry: "code:src/auth.ts::validateToken", direction: "inbound", rel_type: "calls", depth: 5 })
+
+# Combined: callers + knowledge context (decisions, design rationale)
+knowledge_graph({ action: "traverse", entry: "code:src/auth.ts::validateToken", depth: 2 })
+```
 
 ### Auto-linking
 
