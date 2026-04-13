@@ -1933,6 +1933,9 @@ h1 {
     scrollbar-width: none;
     gap: 0;
     padding: 0 8px;
+    position: relative;
+    mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
   }
   .tab-bar::-webkit-scrollbar {
     display: none;
@@ -2002,6 +2005,26 @@ h1 {
   }
   .sessions-list .session-card {
     padding: 10px 12px;
+  }
+  .session-card .session-meta {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .session-card .session-meta-item {
+    white-space: nowrap;
+  }
+  .session-card .session-header {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* -- Icon buttons: touch-friendly -- */
+  .icon-btn {
+    min-width: 36px;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .search-bar {
     max-width: 100%;
