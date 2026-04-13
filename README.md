@@ -189,21 +189,22 @@ Relationship types: `related_to`, `supersedes`, `depends_on`, `contradicts`, `sp
 
 ## REST API
 
-| Method | Endpoint                                | Description               |
-| ------ | --------------------------------------- | ------------------------- |
-| GET    | `/api/knowledge`                        | List knowledge entries    |
-| GET    | `/api/knowledge/search?q=`              | Search knowledge base     |
-| GET    | `/api/knowledge/:path`                  | Read a specific entry     |
-| GET    | `/api/knowledge/god-nodes?top_n=`       | Most-connected entries    |
-| GET    | `/api/knowledge/bridges?top_n=`         | Cross-category connectors |
-| GET    | `/api/knowledge/gaps?max_entries=`      | Isolated entries          |
-| GET    | `/api/knowledge/brief`                  | Knowledge base brief      |
-| GET    | `/api/sessions`                         | List sessions             |
-| GET    | `/api/sessions/search?q=&role=&ranked=` | Search sessions (TF-IDF)  |
-| GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall             |
-| GET    | `/api/sessions/:id`                     | Read a session            |
-| GET    | `/api/sessions/:id/summary`             | Session summary           |
-| GET    | `/health`                               | Health check              |
+| Method | Endpoint                                | Description                |
+| ------ | --------------------------------------- | -------------------------- |
+| GET    | `/api/knowledge`                        | List knowledge entries     |
+| GET    | `/api/knowledge/search?q=`              | Search knowledge base      |
+| GET    | `/api/knowledge/:path`                  | Read a specific entry      |
+| GET    | `/api/knowledge/god-nodes?top_n=`       | Most-connected entries     |
+| GET    | `/api/knowledge/bridges?top_n=`         | Cross-category connectors  |
+| GET    | `/api/knowledge/gaps?max_entries=`      | Isolated entries           |
+| GET    | `/api/knowledge/brief`                  | Knowledge base brief       |
+| GET    | `/api/sessions`                         | List sessions              |
+| GET    | `/api/sessions/search?q=&role=&ranked=` | Search sessions (TF-IDF)   |
+| GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall              |
+| GET    | `/api/sessions/:id`                     | Read a session             |
+| GET    | `/api/sessions/:id/summary`             | Session summary            |
+| POST   | `/api/knowledge`                        | Write entry (HTTP clients) |
+| GET    | `/health`                               | Health check               |
 
 ## Architecture
 
@@ -298,6 +299,18 @@ Frequently accessed entries rise in search rankings; stale entries decay over ti
 | `tools`     | MCP tool calls, CLI commands              |
 | `files`     | File paths, modifications                 |
 | `decisions` | Trade-offs, rationale, choices            |
+
+## Integrations
+
+### REST Write Endpoint
+
+`POST /api/knowledge` accepts `{ category, filename, content }` and runs the full write pipeline: git pull → file write → embedding index → auto-link → git push → duplicate check. Returns `{ path, autoLinks?, duplicateWarnings?, git }` with status 201.
+
+This enables HTTP-based writes from other services without an MCP connection.
+
+### agent-tasks KnowledgeBridge
+
+[agent-tasks](https://github.com/keshrath/agent-tasks) has a built-in `KnowledgeBridge` that auto-pushes `learning` and `decision` artifacts to agent-knowledge on task completion. Entries land in `decisions/` with frontmatter tags (`agent-tasks`, project name, artifact type), are auto-indexed with embeddings, and auto-linked to similar entries. No configuration needed — if agent-knowledge is running at `localhost:3423`, it works.
 
 ## Testing
 
