@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agent-knowledge": {
+      "command": "npx",
+      "args": ["-y", "agent-knowledge@^1.7.2"]
+    }
+  }
+}

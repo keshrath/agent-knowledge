@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -26,6 +26,8 @@
     "dist/",
     "scripts/",
     "skills/",
+    ".claude-plugin/",
+    ".mcp.json",
     "agent-desk-plugin.json",
     "docs/*.md",
     "README.md",
@@ -61,7 +63,8 @@
     "semantic-search",
     "model-context-protocol",
     "ai-agents",
-    "coding-assistants"
+    "coding-assistants",
+    "claude-code"
   ],
   "author": "keshrath",
   "mcpName": "io.github.keshrath/agent-knowledge",
