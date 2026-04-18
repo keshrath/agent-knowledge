@@ -1,7 +1,7 @@
 {
   "name": "agent-knowledge",
   "description": "Cross-session memory for AI coding agents. Git-synced Markdown knowledge base with hybrid semantic + TF-IDF search, typed knowledge graph, and session auto-distillation with secrets scrubbing.",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "author": {
     "name": "keshrath"
   },

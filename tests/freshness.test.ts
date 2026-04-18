@@ -184,22 +184,29 @@ describe('staleByCodeActivity', () => {
     expect(signals[0].touched_files).toContain('src/shared.ts');
   });
 
-  it('default-path coverage: listSessions branch returns empty when no sessions registered', () => {
-    // Without the DI hook, the detector falls back to listSessions() +
-    // getSessionSummary(). On a fresh empty knowledge base with no session
-    // registrations, that path must return [] (not throw) and produce no
-    // signals. Guards against regressions in the non-injected code branch
-    // the other tests don't exercise.
-    writeEntry('decisions/lonely.md', '---\ntitle: Lonely\n---\n\nSee src/x.ts.', 50);
-    const signals = staleByCodeActivity({ sinceDays: 30 });
-    expect(Array.isArray(signals)).toBe(true);
-    // On THIS machine the real listSessions may return the running session's
-    // data — the contract we're pinning is "returns an array without
-    // throwing", not the count. Accept any shape.
-    for (const s of signals) {
-      expect(typeof s.entry).toBe('string');
-      expect(Array.isArray(s.touched_files)).toBe(true);
-      expect(typeof s.confidence).toBe('number');
-    }
-  });
+  it(
+    'default-path coverage: listSessions branch returns empty when no sessions registered',
+    // Tight timeout BUT we also tighten `sinceDays` to 1 so the real
+    // listSessions()+getSessionSummary() path only looks at today's
+    // session files, not every JSONL on the developer's box. Earlier
+    // iterations of this test ran with `sinceDays: 30` and timed out
+    // under full-suite I/O pressure on machines with a heavy session
+    // corpus. The point of the test is still covered — we're pinning
+    // "the default branch returns an array without throwing", not the
+    // size of the result.
+    { timeout: 15_000 },
+    () => {
+      writeEntry('decisions/lonely.md', '---\ntitle: Lonely\n---\n\nSee src/x.ts.', 50);
+      const signals = staleByCodeActivity({ sinceDays: 1 });
+      expect(Array.isArray(signals)).toBe(true);
+      // On THIS machine the real listSessions may return the running session's
+      // data — the contract we're pinning is "returns an array without
+      // throwing", not the count. Accept any shape.
+      for (const s of signals) {
+        expect(typeof s.entry).toBe('string');
+        expect(Array.isArray(s.touched_files)).toBe(true);
+        expect(typeof s.confidence).toBe('number');
+      }
+    },
+  );
 });

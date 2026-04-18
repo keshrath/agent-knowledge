@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.1 (2026-04-18) — freshness test flake fix
+
+### Fixed
+
+- **`tests/freshness.test.ts` "default-path coverage" no longer times out under full-suite I/O pressure.** Previously ran with `sinceDays: 30`, which made the real `listSessions()` + `getSessionSummary()` path iterate every recent session JSONL on the developer's box — on a heavy-corpus machine this hit the 10s timeout when other test files were contending for I/O. Tightened to `sinceDays: 1` (the test pins "default branch returns an array without throwing" — the window size was incidental) and bumped the per-test timeout to 15s for headroom. Full suite now 558/558 green, stable across repeated runs. The failure had silently shipped through v1.8.1 and v1.9.0 labelled "pre-existing flake"; that was wrong and won't recur.
+
+### Tests
+
+558/558 passing (was 557/558 with the flake counted as pass). No behaviour changes, no source changes outside `tests/`.
+
 ## 1.9.0 (2026-04-18) — env var naming cleanup (**breaking**)
 
 Every env var is now under the canonical `AGENT_KNOWLEDGE_*` prefix per the repo-wide Genericity rule (`AGENT_<NAME>_<RESOURCE>`). The old `KNOWLEDGE_*` prefix and the unscoped `EXTRA_SESSION_ROOTS` are gone — no deprecation shim, no startup warning, just renamed. README and docs table rewritten so no host name (`Claude Code`, `~/.claude`) leaks into descriptions — the adapter registry already auto-detects `.claude`, `.cursor`, `.codex`, `.aider`, `.continue`, and OpenCode without configuration.
