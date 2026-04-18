@@ -141,6 +141,39 @@ knowledge_admin with action "config", memory_dir "/custom/path/knowledge"
 knowledge_admin with action "config", auto_distill false
 ```
 
+### Lifecycle Hooks
+
+agent-knowledge ships six lifecycle hook scripts that integrate with Claude Code's event system. Running `node scripts/setup.js` installs all six into `~/.claude/settings.json`; on other hosts that don't support lifecycle hooks (Cursor, Windsurf), the MCP tools still work — you just lose the automatic context injection.
+
+| Script                     | Event            | Purpose                                                                   |
+| -------------------------- | ---------------- | ------------------------------------------------------------------------- |
+| `session-start.js`         | SessionStart     | Dashboard URL + auto-loads token-budgeted wakeup payload into context     |
+| `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff    |
+| `first-prompt-inject.mjs`  | UserPromptSubmit | Query-targeted knowledge hits injected on the session's first real prompt |
+| `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context    |
+| `precompact-distill.mjs`   | PreCompact       | Lightweight text snapshot of recent user prompts                          |
+| `sessionend-distill.mjs`   | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                  |
+
+Every hook fails open — if a script errors, it logs to stderr and the session continues. Each hook has env-var toggles (`AGENT_KNOWLEDGE_AUTOWAKE`, `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`, `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE`, etc.) — see [`docs/HOOKS.md`](HOOKS.md) for the full reference, test coverage, and budget/threshold knobs.
+
+### Persistent Memory — agent-knowledge, not host auto-memory
+
+If your host has a per-session memory system (Claude Code writes `~/.claude/projects/*/memory/` files; Cursor has its own analogue), route durable facts to **agent-knowledge** instead:
+
+- User preferences / feedback rules → `knowledge(action: write, category: "workflows", ..., evergreen: true)`
+- User profile facts → `knowledge(action: write, category: "people", ...)`
+- Project context → `knowledge(action: write, category: "projects", ...)`
+
+Host auto-memory is machine-local and invisible to other sessions and other machines. agent-knowledge is git-synced, searchable via `knowledge_search`, shows up in wakeup, and survives machine swaps. For Claude Code specifically, add a rule to your global `~/.claude/CLAUDE.md` so Claude honors the redirect automatically:
+
+```markdown
+## Persistent memory: always agent-knowledge, never auto-memory
+
+Every durable fact goes to agent-knowledge via `knowledge(action: write)`. Never write
+to `~/.claude/projects/*/memory/` — auto-memory is machine-local and invisible to other
+sessions.
+```
+
 ---
 
 ## 4. Dashboard Guide

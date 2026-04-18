@@ -69,7 +69,7 @@ From the agent-knowledge clone:
 node scripts/setup.js
 ```
 
-This detects Claude Code, registers the MCP server in `~/.claude.json`, wires all 5 hooks into `~/.claude/settings.json`, and grants `mcp__agent-knowledge__*` permission in one shot. Restart Claude Code afterwards to pick up the new config.
+This detects Claude Code, registers the MCP server in `~/.claude.json`, wires all 6 lifecycle hooks into `~/.claude/settings.json`, and grants `mcp__agent-knowledge__*` permission in one shot. Restart Claude Code afterwards to pick up the new config.
 
 #### Register the MCP server (manual)
 
@@ -180,17 +180,18 @@ curl -X PUT http://localhost:3423/api/knowledge/notes/my-note \
 
 ## Hooks
 
-agent-knowledge ships **5 hook scripts** that wire into Claude Code's lifecycle events. `scripts/setup.js` installs them automatically; the block below shows the manual equivalent. Support varies by client.
+agent-knowledge ships **6 hook scripts** that wire into Claude Code's lifecycle events. `scripts/setup.js` installs them automatically; the block below shows the manual equivalent. Support varies by client.
 
-| Hook                      | Event            | Purpose                                                                          |
-| ------------------------- | ---------------- | -------------------------------------------------------------------------------- |
-| `session-start.js`        | SessionStart     | Dashboard URL + auto-loads token-budgeted wakeup payload into context            |
-| `first-prompt-inject.mjs` | UserPromptSubmit | v1.8 — query-targeted knowledge hits injected on the session's first real prompt |
-| `precompact-flush.mjs`    | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context           |
-| `precompact-distill.mjs`  | PreCompact       | Lightweight text snapshot of recent user prompts                                 |
-| `sessionend-distill.mjs`  | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                         |
+| Hook                       | Event            | Purpose                                                                          |
+| -------------------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `session-start.js`         | SessionStart     | Dashboard URL + auto-loads token-budgeted wakeup payload into context            |
+| `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff           |
+| `first-prompt-inject.mjs`  | UserPromptSubmit | v1.8 — query-targeted knowledge hits injected on the session's first real prompt |
+| `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context           |
+| `precompact-distill.mjs`   | PreCompact       | Lightweight text snapshot of recent user prompts                                 |
+| `sessionend-distill.mjs`   | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                         |
 
-See [`docs/hooks.md`](hooks.md) for the full hook reference including environment variables and test coverage.
+See [`docs/HOOKS.md`](HOOKS.md) for the full hook reference including environment variables and test coverage.
 
 ### Claude Code Hooks
 
@@ -204,6 +205,11 @@ See [`docs/hooks.md`](hooks.md) for the full hook reference including environmen
             "type": "command",
             "command": "node \"/path/to/agent-knowledge/scripts/hooks/session-start.js\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node \"/path/to/agent-knowledge/scripts/hooks/session-start-ingest.mjs\"",
+            "timeout": 10
           }
         ]
       }

@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.9.2 (2026-04-19) — doc/setup drift cleanup + HOOKS.md rename
+
+### Fixed
+
+- **`scripts/setup.js` now installs `first-prompt-inject.mjs`.** It was missing — SETUP.md advertised 6 hooks but automated setup only wired 5. Users running `node scripts/setup.js` previously didn't get the UserPromptSubmit targeted-injection hook.
+- **Test-count badge** corrected in README (557 → 558 after v1.9.1's flake fix; badge wasn't updated at the time).
+
+### Changed
+
+- **`docs/hooks.md` → `docs/HOOKS.md`** to match the ALL-CAPS convention of SETUP.md / USER-MANUAL.md / ARCHITECTURE.md / INGEST.md / DASHBOARD.md. All internal links updated (README, SETUP.md, USER-MANUAL.md, setup.js, CHANGELOG.md).
+- **Hook count bumped 5 → 6 everywhere.** `session-start-ingest.mjs` was installed by setup.js (and runs in every session) but wasn't listed in SETUP.md or HOOKS.md. Now documented with a dedicated section in HOOKS.md and a row in every hook table.
+- **Setup banner** (`scripts/setup.js` post-install message) now lists all six hooks with their exact script names instead of a 4-item vague summary.
+
+### Added
+
+- **USER-MANUAL.md §3 Configuration → "Lifecycle Hooks" subsection.** Previously the manual had zero hook coverage; it now mirrors the SETUP.md table and points at HOOKS.md for the full reference.
+- **USER-MANUAL.md §3 Configuration → "Persistent Memory — agent-knowledge, not host auto-memory" subsection.** Explains that on hosts with a per-session memory system (Claude Code's `~/.claude/projects/*/memory/`), durable facts should route to agent-knowledge instead. Includes the CLAUDE.md snippet that enforces the redirect for Claude Code users.
+- **README feature list** gains a bullet naming agent-knowledge as the replacement for host auto-memory, linking to the USER-MANUAL section.
+
+### Tests
+
+558/558 passing. No source changes — docs + setup.js only.
+
 ## 1.9.1 (2026-04-18) — freshness test flake fix
 
 ### Fixed
@@ -41,7 +64,7 @@ Standard third-party keys still work as fallbacks when the scoped form is unset:
 ### Documented
 
 - `AGENT_KNOWLEDGE_INDEX_VERBATIM`, `AGENT_KNOWLEDGE_EMBEDDING_THREADS`, `AGENT_KNOWLEDGE_EMBEDDING_MODEL` — existed but were missing from the README table.
-- `AGENT_KNOWLEDGE_AUTOWAKE`, `AGENT_KNOWLEDGE_WAKEUP_BUDGET`, `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`, `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`, `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS`, `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE` — hook env vars were in `docs/hooks.md` but not surfaced in the main README table. Fixed.
+- `AGENT_KNOWLEDGE_AUTOWAKE`, `AGENT_KNOWLEDGE_WAKEUP_BUDGET`, `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`, `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`, `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS`, `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE` — hook env vars were in `docs/HOOKS.md` but not surfaced in the main README table. Fixed.
 
 ### Fixed
 

@@ -142,6 +142,14 @@ addUnmatchedHook(
   10,
 );
 
+// UserPromptSubmit: targeted knowledge injection on the session's first real prompt
+addUnmatchedHook(
+  'UserPromptSubmit',
+  'first-prompt-inject.mjs',
+  `node "${join(hookDir, 'first-prompt-inject.mjs')}"`,
+  10,
+);
+
 // PreCompact: rich summary (library) + simple text distill (heuristic)
 addUnmatchedHook(
   'PreCompact',
@@ -205,13 +213,15 @@ console.log(`
 Setup complete!
 
 Restart Claude Code to load the new MCP server. Every session will now:
-  - Show the knowledge dashboard URL on start (SessionStart hook)
-  - Flush a rich session summary before compaction (precompact-flush)
-  - Snapshot recent user prompts before compaction (precompact-distill)
-  - Dump a final session summary on exit (sessionend-distill)
+  - Show the knowledge dashboard URL + L0/L1 wakeup payload on start (session-start.js)
+  - Report ingest freshness on start (session-start-ingest.mjs)
+  - Inject query-targeted knowledge hits on the first real user prompt (first-prompt-inject.mjs)
+  - Flush a rich session summary before compaction (precompact-flush.mjs)
+  - Snapshot recent user prompts before compaction (precompact-distill.mjs)
+  - Dump a final session summary on exit (sessionend-distill.mjs)
 
 Dashboard: http://localhost:3423 (auto-starts on first MCP connection)
 Knowledge base: ~/agent-knowledge/ (configurable via AGENT_KNOWLEDGE_MEMORY_DIR)
 
-See docs/hooks.md for details and docs/SETUP.md for manual configuration.
+See docs/HOOKS.md for details and docs/SETUP.md for manual configuration.
 `);

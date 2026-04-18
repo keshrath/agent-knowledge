@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
-[![Tests: 557 passing](https://img.shields.io/badge/Tests-557%20passing-brightgreen.svg)]()
+[![Tests: 558 passing](https://img.shields.io/badge/Tests-558%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
 [![LongMemEval R@5: 98.8%](https://img.shields.io/badge/LongMemEval%20R%405-98.8%25-brightgreen.svg)]()
 
@@ -83,7 +83,8 @@ No configuration needed. Additional session roots can be added via the `AGENT_KN
 - **Deterministic pre-extraction in distillation** — session summaries now include git commits, error patterns, URLs accessed, and packages changed extracted via regex from bash/tool output (no LLM cost)
 - **Freshness metadata on every search hit (v1.8.1)** — every knowledge result carries `freshness: { body_age_days, last_accessed, access_count, verified_at, verification_age_days, evergreen }`. Agent reads the trust signal and decides; we impose no policy demotion.
 - **Per-category decay windows (v1.8.1)** — the "Unused" filter and bytype chart honor per-category thresholds (projects 180d, people 365d, decisions 90d, workflows 60d, notes 30d) so identity-shaped content doesn't look stale just because it isn't re-read weekly.
-- **Lifecycle hooks** — `SessionStart` auto-wakeup, `UserPromptSubmit` first-prompt targeted injection, `PreCompact` memory-flush nudge. Every hook is fail-open and toggleable via an `AGENT_KNOWLEDGE_*` env var.
+- **Lifecycle hooks** — `SessionStart` auto-wakeup + ingest-freshness check, `UserPromptSubmit` first-prompt targeted injection, `PreCompact` memory-flush nudge + distill, `SessionEnd` distill. Six hook scripts total, all fail-open, each toggleable via an `AGENT_KNOWLEDGE_*` env var. See [`docs/HOOKS.md`](docs/HOOKS.md).
+- **Replaces host auto-memory** — on hosts with a per-session memory system (Claude Code's `~/.claude/projects/*/memory/`, similar in other IDEs), route durable user facts and feedback to agent-knowledge instead. Auto-memory is machine-local and invisible to other machines; agent-knowledge is git-synced, cross-machine, searchable, and surfaces in wakeup. See the Claude Code integration note in [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md#persistent-memory--agent-knowledge-not-host-auto-memory).
 
 ## Codebase Ingestion
 

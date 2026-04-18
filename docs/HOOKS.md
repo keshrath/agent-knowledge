@@ -1,19 +1,20 @@
 # Hooks (Claude Code)
 
-agent-knowledge ships five hook scripts that integrate with Claude Code's
+agent-knowledge ships six hook scripts that integrate with Claude Code's
 lifecycle events. They live under `scripts/hooks/` and are installed by
 `scripts/setup.js` into `~/.claude/settings.json`.
 
 All hooks fail open — any internal error is logged to stderr and the hook
 returns an empty JSON object so the user is never blocked.
 
-| Script                    | Event            | Purpose                                                                  |
-| ------------------------- | ---------------- | ------------------------------------------------------------------------ |
-| `session-start.js`        | SessionStart     | Announces dashboard URL + auto-loads wakeup payload into context         |
-| `first-prompt-inject.mjs` | UserPromptSubmit | Injects query-targeted knowledge hits on the session's first real prompt |
-| `precompact-flush.mjs`    | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context   |
-| `precompact-distill.mjs`  | PreCompact       | Lightweight text snapshot of recent user prompts                         |
-| `sessionend-distill.mjs`  | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                 |
+| Script                     | Event            | Purpose                                                                  |
+| -------------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `session-start.js`         | SessionStart     | Announces dashboard URL + auto-loads wakeup payload into context         |
+| `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff   |
+| `first-prompt-inject.mjs`  | UserPromptSubmit | Injects query-targeted knowledge hits on the session's first real prompt |
+| `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context   |
+| `precompact-distill.mjs`   | PreCompact       | Lightweight text snapshot of recent user prompts                         |
+| `sessionend-distill.mjs`   | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                 |
 
 ## session-start.js
 
@@ -36,6 +37,18 @@ Two jobs:
 
 Requires `npm run build` to have succeeded — if `dist/wakeup.js` is missing,
 only the dashboard-URL line is emitted (fail-open).
+
+## session-start-ingest.mjs
+
+Second SessionStart hook, paired with `session-start.js`. On session start:
+
+1. Detects the current project from `cwd`.
+2. Checks whether a `knowledge-ingest` cache exists for it.
+3. If no cache → suggests bootstrapping (the `/knowledge-ingest` skill).
+4. If cache exists → computes a quick SHA256 diff of the current files vs the cached snapshot and reports how many files changed since last ingest.
+
+Zero LLM tokens, reads/hashes only. Fail-open: all errors logged to stderr,
+always outputs valid JSON.
 
 ## first-prompt-inject.mjs
 
@@ -170,7 +183,7 @@ Replace `/abs/path/to/agent-knowledge` with your clone path.
 
 ## Testing the hooks
 
-`tests/hooks/hooks.test.ts` covers all five scripts with shape-correct
+`tests/hooks/hooks.test.ts` covers the six scripts with shape-correct
 fail-open assertions plus a positive-path render test for
 `first-prompt-inject.mjs`. Run `npm test -- tests/hooks/` to execute them
 in isolation.
