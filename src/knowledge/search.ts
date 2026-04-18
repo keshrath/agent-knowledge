@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { BM25Index } from '../search/bm25.js';
 import { getEntryScoring, computeFinalScore, decayFactor, maturityMultiplier } from './scoring.js';
 import { buildExcerpt } from '../search/excerpt.js';
@@ -44,12 +46,37 @@ export interface ScoreComponents {
   mmr_penalty: number;
 }
 
+/**
+ * Freshness + trust metadata attached to every knowledge hit (v1.8.1).
+ *
+ * These are automatic signals — no agent action required. The agent can read
+ * them to form a trust judgment ("body last edited 120 days ago, still being
+ * accessed 8x/week → probably out of date") without us imposing policy via
+ * demotion or flags.
+ */
+export interface FreshnessMeta {
+  /** Days since the underlying markdown file was last modified on disk. */
+  body_age_days: number | null;
+  /** ISO timestamp of the most recent read via knowledge(action:"read"). */
+  last_accessed: string | null;
+  /** Number of recorded reads. */
+  access_count: number;
+  /** ISO timestamp of the last promoter auto-verify (or future explicit verify). */
+  verified_at: string | null;
+  /** Days since last verified, null if never verified. */
+  verification_age_days: number | null;
+  /** Evergreen entries are exempt from decay-based demotion; surfaced here for UI. */
+  evergreen: boolean;
+}
+
 export interface SearchResult {
   entry: KnowledgeEntry;
   score: number;
   excerpt: string;
   /** Populated only when the caller passes `explain: true`. */
   score_components?: ScoreComponents;
+  /** Automatic freshness + trust signal — present on every hit. */
+  freshness?: FreshnessMeta;
 }
 
 // ── TF-IDF index cache for knowledge entries ──────────────────────────────
@@ -195,10 +222,36 @@ export function searchKnowledge(
           }
         : undefined;
 
+      // v1.8.1: automatic freshness metadata per hit — surface the trust
+      // signals the agent needs to judge whether this entry is still current,
+      // without requiring any agent-proactive call. Cheap: scoring row is
+      // already loaded above; body mtime is a single fs.statSync. We tolerate
+      // stat errors gracefully and emit `null` age.
+      let bodyAgeDays: number | null = null;
+      try {
+        const full = path.join(dir, doc.entry.path);
+        const stat = fs.statSync(full);
+        bodyAgeDays = Math.round(((Date.now() - stat.mtimeMs) / (24 * 3600_000)) * 10) / 10;
+      } catch {
+        /* ignore — file may have been moved */
+      }
+      const verifiedAt = scoreInfo?.verified_at ?? null;
+      const freshness = {
+        body_age_days: bodyAgeDays,
+        last_accessed: lastAccessed,
+        access_count: scoreInfo?.access_count ?? 0,
+        verified_at: verifiedAt,
+        verification_age_days: verifiedAt
+          ? Math.round(((Date.now() - new Date(verifiedAt).getTime()) / (24 * 3600_000)) * 10) / 10
+          : null,
+        evergreen,
+      };
+
       const res: SearchResult = {
         entry: doc.entry,
         score: finalScore,
         excerpt: buildExcerpt(doc.content, query, { caseSensitive, contextAfter: 200 }),
+        freshness,
       };
       if (components) res.score_components = components;
       results.push(res);

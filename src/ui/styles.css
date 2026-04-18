@@ -1586,6 +1586,215 @@ h1 {
   margin-bottom: 8px;
 }
 
+/* ── v1.8.1 Pin Badge (evergreen entries) ─────────────────────────────── */
+.pin-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 16px;
+  line-height: 1;
+  cursor: help;
+}
+
+.pin-badge .material-symbols-outlined {
+  font-size: 16px;
+  font-variation-settings:
+    'FILL' 1,
+    'wght' 500,
+    'GRAD' 0,
+    'opsz' 20;
+}
+
+/* ── v1.8.1 Author Footer Tag ─────────────────────────────────────────── */
+.card-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-dim);
+  background: var(--bg-hover);
+  padding: 1px 6px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.card-author::before {
+  content: 'by';
+  font-family: var(--font-sans);
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* ── v1.8.1 Unused Filter Button ──────────────────────────────────────── */
+.unused-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--orange);
+  background: var(--orange-dim);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.unused-filter-btn:hover {
+  background: var(--orange-dim);
+  border-color: var(--orange);
+}
+
+.unused-filter-btn.active {
+  background: var(--orange);
+  color: #ffffff;
+  border-color: var(--orange);
+  font-weight: 600;
+}
+
+.unused-filter-btn .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.unused-filter-btn[hidden] {
+  display: none;
+}
+
+/* ── v1.8.1 By-Type Access Bar Chart ──────────────────────────────────── */
+.bytype-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-1);
+}
+
+.bytype-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.bytype-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.bytype-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.bytype-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bytype-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.bytype-legend-swatch.recent {
+  background: var(--green);
+}
+
+.bytype-legend-swatch.unused {
+  background: var(--orange);
+}
+
+.bytype-rows {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+}
+
+.bytype-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
+.bytype-row-label .material-symbols-outlined {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.bytype-bar {
+  position: relative;
+  display: flex;
+  height: 10px;
+  width: 100%;
+  background: var(--bg-inset);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.bytype-bar-recent {
+  background: var(--green);
+  height: 100%;
+  transition: width var(--transition-normal);
+}
+
+.bytype-bar-unused {
+  background: var(--orange);
+  height: 100%;
+  transition: width var(--transition-normal);
+}
+
+.bytype-bar-empty {
+  background: var(--bg-hover);
+  height: 100%;
+  width: 100%;
+}
+
+.bytype-row-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 48px;
+  text-align: right;
+}
+
+.bytype-row-count .count-recent {
+  color: var(--green);
+}
+
+.bytype-row-count .count-unused {
+  color: var(--orange);
+}
+
+.bytype-row-count .count-sep {
+  color: var(--text-dim);
+  opacity: 0.5;
+  margin: 0 2px;
+}
+
 /* ── Related Entries ──────────────────────────────────────────────────── */
 .related-section {
   margin-top: 20px;

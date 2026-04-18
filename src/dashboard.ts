@@ -211,8 +211,30 @@ function buildSnapshot(): Snapshot {
 
 function fullState(): Record<string, unknown> {
   const s = buildSnapshot();
+  // Enrich with live scoring so the WS-delivered state carries the same
+  // last_accessed / maturity / access_count shape the REST route returns.
+  // Enrichment lives here (not buildSnapshot) because scoring changes on every
+  // read while the entry list itself only changes on file mutation.
+  let knowledge: unknown = s.knowledge;
+  try {
+    const scoring = getEntryScoring();
+    const scores = scoring.getScores(s.knowledge.map((e) => e.path));
+    knowledge = s.knowledge.map((e) => {
+      const score = scores.get(e.path);
+      return {
+        ...e,
+        evergreen: e.evergreen === true,
+        author: e.author ?? null,
+        maturity: score?.maturity ?? 'candidate',
+        access_count: score?.access_count ?? 0,
+        last_accessed: score?.last_accessed ?? null,
+      };
+    });
+  } catch (err) {
+    console.error('[knowledge] ws enrichment:', err instanceof Error ? err.message : err);
+  }
   return {
-    knowledge: s.knowledge,
+    knowledge,
     stats: {
       knowledge_entries: s.knowledge.length,
       session_count: s.sessionCount,
@@ -385,7 +407,11 @@ const knowledgeListRoute: RouteHandler = (req, res) => {
     const enriched = entries.map((e) => {
       const score = scores.get(e.path);
       return {
+        // `...e` carries through `evergreen` and `author` from the store
+        // when they are present in frontmatter; both are optional.
         ...e,
+        evergreen: e.evergreen === true,
+        author: e.author ?? null,
         maturity: score?.maturity ?? 'candidate',
         access_count: score?.access_count ?? 0,
         last_accessed: score?.last_accessed ?? null,

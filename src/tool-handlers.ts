@@ -17,13 +17,16 @@ import {
   gaps,
   generateBrief,
   invalidateBriefCache,
+  searchGaps,
+  staleByCodeActivity,
 } from './knowledge/analyze.js';
+import { logQuery } from './knowledge/query-log.js';
 import { reflect } from './knowledge/reflect.js';
 import { indexKnowledgeEntry } from './sessions/indexer.js';
 import { searchSessions } from './sessions/search.js';
 import { searchKnowledge, invalidateKnowledgeIndexCache } from './knowledge/search.js';
 import { listSessions, getSessionSummary } from './sessions/summary.js';
-import { wakeup } from './wakeup.js';
+import { wakeup, buildContextBundle, DEFAULT_SECTIONS, type SectionName } from './wakeup.js';
 import { promote } from './knowledge/promote.js';
 import { scopedSearch, type SearchScope } from './sessions/scopes.js';
 import { VectorStore } from './vectorstore/index.js';
@@ -237,7 +240,63 @@ export async function handleKnowledge(args: Record<string, unknown>): Promise<To
       const tokenBudget = optionalNumber(a, 'token_budget', 50, 8000);
       // Reuses the existing `category` param — same enum, same meaning.
       const scope = validateEnum(optionalString(a, 'category'), CATEGORIES, 'category');
-      const result = wakeup({ tokenBudget, scope });
+
+      // v1.8.1: optional section-priority knobs. When neither is provided the
+      // handler routes to the v1.8.0-compatible `wakeup` wrapper so the
+      // rendered output shape stays byte-identical for legacy callers.
+      const sectionsRaw = optionalString(a, 'sections');
+      const sectionBudgetsRaw = a['section_budgets'];
+
+      if (sectionsRaw === undefined && sectionBudgetsRaw === undefined) {
+        const result = wakeup({ tokenBudget, scope });
+        return ok(result);
+      }
+
+      let sections: SectionName[] | undefined;
+      if (sectionsRaw !== undefined) {
+        const parts = sectionsRaw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        const allowed = new Set<string>(DEFAULT_SECTIONS);
+        const invalid = parts.filter((p) => !allowed.has(p));
+        if (invalid.length > 0) {
+          return err(
+            `Unknown section(s): ${invalid.join(', ')}. Valid: ${DEFAULT_SECTIONS.join(', ')}`,
+          );
+        }
+        sections = parts as SectionName[];
+      }
+
+      let sectionBudgets: Partial<Record<SectionName, number>> | undefined;
+      if (sectionBudgetsRaw !== undefined) {
+        if (
+          typeof sectionBudgetsRaw !== 'object' ||
+          sectionBudgetsRaw === null ||
+          Array.isArray(sectionBudgetsRaw)
+        ) {
+          return err('section_budgets must be a JSON object mapping section name → token budget');
+        }
+        const out: Partial<Record<SectionName, number>> = {};
+        const allowed = new Set<string>(DEFAULT_SECTIONS);
+        for (const [k, v] of Object.entries(sectionBudgetsRaw as Record<string, unknown>)) {
+          if (!allowed.has(k)) {
+            return err(`Unknown section in section_budgets: ${k}`);
+          }
+          if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+            return err(`section_budgets.${k} must be a non-negative number`);
+          }
+          out[k as SectionName] = v;
+        }
+        sectionBudgets = out;
+      }
+
+      const result = buildContextBundle({
+        tokenBudget,
+        scope,
+        sections,
+        sectionBudgets,
+      });
       return ok(result);
     }
     default:
@@ -336,6 +395,7 @@ export async function handleKnowledgeSearch(args: Record<string, unknown>): Prom
       maxResults,
       semantic,
     });
+    logQuery({ query, project, resultsCount: sessions.length });
     return ok({ mode: 'scoped', scope, sessions, knowledge: [] });
   }
 
@@ -380,6 +440,27 @@ export async function handleKnowledgeSearch(args: Record<string, unknown>): Prom
     };
     return explain && r.score_components ? { ...base, score_components: r.score_components } : base;
   });
+
+  logQuery({
+    query,
+    project,
+    resultsCount: sessionResults.length + knowledgeResults.length,
+  });
+
+  // Mark access for every knowledge hit. Previously `recordAccess` was only
+  // called on explicit `knowledge(action: read)`; that under-counted the
+  // search path, which is the main way the scoring system "sees" an entry
+  // earn its keep. Sessions hits don't bump — only knowledge entries.
+  if (knowledgeResults.length > 0) {
+    try {
+      getEntryScoring().recordBulkAccess(knowledgeResults.map((r) => r.path));
+    } catch (err) {
+      console.error(
+        '[knowledge_search] recordBulkAccess failed:',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
 
   return ok({
     mode: 'general',
@@ -722,9 +803,33 @@ export async function handleKnowledgeAnalyze(args: Record<string, unknown>): Pro
       const result = generateBrief(config.memoryDir);
       return ok(result);
     }
+    case 'search_gaps': {
+      const sinceDays = optionalNumber(a, 'since_days', 1, 3650) ?? 30;
+      const minCount = optionalNumber(a, 'min_count', 1, 1000) ?? 1;
+      const groupSimilarity = optionalNumber(a, 'group_similarity', 0, 1) ?? 0.7;
+      const result = searchGaps({ sinceDays, minCount, groupSimilarity });
+      return ok(result);
+    }
+    case 'stale_by_code_activity': {
+      // v1.8.1: fully-automatic staleness detector. For each knowledge entry,
+      // cross-reference its mentioned file paths against `filesModified` from
+      // recent session summaries. Entries whose referenced code has moved
+      // after the body was last edited surface as staleness candidates.
+      const sinceDays = optionalNumber(a, 'since_days', 1, 3650) ?? 30;
+      const minTouchingSessions = optionalNumber(a, 'min_touching_sessions', 1, 50) ?? 1;
+      const maxEntries = optionalNumber(a, 'max_entries', 1, 5000) ?? 500;
+      const category = validateEnum(optionalString(a, 'category'), CATEGORIES, 'category');
+      const result = staleByCodeActivity({
+        sinceDays,
+        minTouchingSessions,
+        maxEntries,
+        category,
+      });
+      return ok(result);
+    }
     default:
       return err(
-        `Unknown action: ${action}. Valid actions: consolidate, reflect, god_nodes, bridges, gaps, brief`,
+        `Unknown action: ${action}. Valid actions: consolidate, reflect, god_nodes, bridges, gaps, brief, search_gaps, stale_by_code_activity`,
       );
   }
 }

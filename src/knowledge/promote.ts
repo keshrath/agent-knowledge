@@ -48,6 +48,7 @@ import { listEntries, readEntry, writeEntry, parseFrontmatter } from './store.js
 import { gitPull, gitPush } from './git.js';
 import { getConfig } from '../types.js';
 import { scrubContent, normalizeProjectName } from './distill.js';
+import { getEntryScoring } from './scoring.js';
 
 // ── Signal weights ──────────────────────────────────────────────────────────
 
@@ -466,6 +467,7 @@ async function applyPromotion(memoryDir: string, agg: RawAggregate): Promise<str
   );
   const existingPath = entryMap.get(agg.id.toLowerCase());
 
+  let writtenPath: string;
   if (existingPath) {
     const { content } = readEntry(memoryDir, existingPath);
     const merged = isEvergreen(memoryDir, existingPath)
@@ -473,25 +475,39 @@ async function applyPromotion(memoryDir: string, agg: RawAggregate): Promise<str
       : mergeIntoExisting(content, activity);
     const filename = existingPath.replace(/^projects\//, '');
     writeEntry(memoryDir, 'projects', filename, merged);
-    return existingPath;
+    writtenPath = existingPath;
+  } else {
+    const filename = `${agg.id}.md`;
+    const body = [
+      '---',
+      `title: ${agg.id}`,
+      `tags: [auto-distilled, promoted]`,
+      `updated: ${new Date().toISOString().split('T')[0]}`,
+      `confidence: inferred`,
+      `confidence_score: 0.75`,
+      '---',
+      '',
+      `# ${agg.id}`,
+      '',
+      activity,
+    ].join('\n');
+    writeEntry(memoryDir, 'projects', filename, body);
+    writtenPath = `projects/${filename}`;
   }
 
-  const filename = `${agg.id}.md`;
-  const body = [
-    '---',
-    `title: ${agg.id}`,
-    `tags: [auto-distilled, promoted]`,
-    `updated: ${new Date().toISOString().split('T')[0]}`,
-    `confidence: inferred`,
-    `confidence_score: 0.75`,
-    '---',
-    '',
-    `# ${agg.id}`,
-    '',
-    activity,
-  ].join('\n');
-  writeEntry(memoryDir, 'projects', filename, body);
-  return `projects/${filename}`;
+  // v1.8.1: auto-verify promoter output. The promoter writes from CURRENT
+  // session activity — by construction the content reflects fresh signal,
+  // so the timestamp is the point of promotion itself. This gives retrieval
+  // + dashboard a trust anchor without requiring any agent-facing action.
+  try {
+    getEntryScoring().markVerified(writtenPath);
+  } catch (err) {
+    console.error(
+      '[promote] markVerified failed (non-fatal):',
+      err instanceof Error ? err.message : err,
+    );
+  }
+  return writtenPath;
 }
 
 // ── Diary ──────────────────────────────────────────────────────────────────

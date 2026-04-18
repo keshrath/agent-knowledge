@@ -8,6 +8,7 @@
 import { listEntries, type KnowledgeEntry } from './store.js';
 import { getKnowledgeGraph } from './graph.js';
 import { getEntryScoring } from './scoring.js';
+import { getSearchGaps, type SearchGap } from './query-log.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -278,6 +279,44 @@ export function gaps(dir: string, maxEntries: number = 30): Gap[] {
 
   return result.slice(0, maxEntries);
 }
+
+// ── Search Gaps ──────────────────────────────────────────────────────────────
+
+export interface SearchGapsOptions {
+  /** Lookback window in days. Default: 30. */
+  sinceDays?: number;
+  /** Only return groups with at least this many occurrences. Default: 1. */
+  minCount?: number;
+  /** Jaccard token similarity threshold for grouping. Default: 0.7. */
+  groupSimilarity?: number;
+}
+
+/**
+ * Return zero-result `knowledge_search` queries from the query log,
+ * grouped by token-set similarity. This is the single strongest "what
+ * knowledge entries should I write next?" signal — if an agent keeps
+ * searching for the same topic and getting nothing, write it down.
+ */
+export function searchGaps(options: SearchGapsOptions = {}): SearchGap[] {
+  const sinceDays = options.sinceDays ?? 30;
+  const minCount = options.minCount ?? 1;
+  // 0.35 default: Jaccard on short queries is small — "gitlab credentials"
+  // vs "gitlab token" = 1/3 ≈ 0.33. At 0.7 every zero-result query gets its
+  // own group, defeating the feature. 0.35 catches topic-overlap, still
+  // rejects unrelated pairs (Jaccard=0).
+  const groupSimilarity = options.groupSimilarity ?? 0.35;
+
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+
+  return getSearchGaps({ since, minCount, groupSimilarity });
+}
+
+// ── Code-activity staleness (v1.8.1) ────────────────────────────────────────
+
+// Re-export from the dedicated module so the analyze tool has one public
+// surface. See src/knowledge/freshness.ts for the detector implementation.
+export { staleByCodeActivity } from './freshness.js';
+export type { StalenessSignal, FreshnessOptions } from './freshness.js';
 
 // ── Knowledge Brief ──────────────────────────────────────────────────────────
 

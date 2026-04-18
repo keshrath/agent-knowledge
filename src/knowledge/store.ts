@@ -33,6 +33,12 @@ export interface KnowledgeEntry {
    * Use for durable decisions / architecture / identity.
    */
   evergreen?: boolean;
+  /**
+   * Optional free-form author string from frontmatter.
+   * Examples: "human", "agent:opencode", "claude-code".
+   * Surfaced in the dashboard card footer.
+   */
+  author?: string;
 }
 
 /**
@@ -122,6 +128,10 @@ export function listEntries(dir: string, category?: string, tag?: string): Knowl
       const evergreen = evergreenRaw
         ? evergreenRaw.toLowerCase() === 'true' || evergreenRaw === '1'
         : undefined;
+      const author =
+        typeof meta.author === 'string' && meta.author.trim().length > 0
+          ? meta.author.trim()
+          : undefined;
 
       entries.push({
         path: file,
@@ -134,6 +144,7 @@ export function listEntries(dir: string, category?: string, tag?: string): Knowl
           ? { confidence_score: confidenceScore }
           : {}),
         ...(evergreen ? { evergreen } : {}),
+        ...(author ? { author } : {}),
       });
     } catch (err) {
       console.error('[knowledge] list entry:', err instanceof Error ? err.message : err);
@@ -176,6 +187,10 @@ export function readEntry(
   const evergreen = evergreenRaw
     ? evergreenRaw.toLowerCase() === 'true' || evergreenRaw === '1'
     : undefined;
+  const author =
+    typeof meta.author === 'string' && meta.author.trim().length > 0
+      ? meta.author.trim()
+      : undefined;
 
   const entry: KnowledgeEntry = {
     path: entryPath,
@@ -189,6 +204,7 @@ export function readEntry(
       ? { confidence_score: confidenceScore }
       : {}),
     ...(evergreen ? { evergreen } : {}),
+    ...(author ? { author } : {}),
   };
 
   return { entry, content };

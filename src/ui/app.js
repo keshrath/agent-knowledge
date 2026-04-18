@@ -7,7 +7,14 @@
   // ── State ──────────────────────────────────────────────────────────────────
   const state = {
     activeTab: 'knowledge',
-    knowledge: { entries: [], activeCategory: 'all', duplicateClusters: {} },
+    knowledge: {
+      entries: [],
+      activeCategory: 'all',
+      duplicateClusters: {},
+      // v1.8.1: when true, the grid is filtered to entries whose
+      // `last_accessed` is null or older than 90 days.
+      onlyUnused: false,
+    },
     search: {
       query: '',
       results: [],
@@ -564,6 +571,266 @@
     if (el.themeToggle) el.themeToggle.style.display = 'none';
   });
 
+  // ── v1.8.1 Knowledge extras: unused filter, by-type chart, pin+author ─────
+  //
+  // The original renderer lives in render-knowledge.js. To avoid touching that
+  // file, we wrap K.renderKnowledge once at init time. The wrapper:
+  //  1. optionally filters the entries list by the "Unused 90d+" toggle,
+  //  2. delegates to the original renderer,
+  //  3. post-processes each rendered card to inject the pin badge
+  //     (for `evergreen: true`) and the `by <author>` footer tag,
+  //  4. refreshes the "By Type" bar chart and the filter-button count.
+
+  // Per-category recency windows (days). A flat 30d default penalised
+  // long-lived categories like `people` and `projects` that are correctly
+  // consulted rarely; 30d worked for `notes` but was far too tight for
+  // identity-shaped content. Values are tuned for the typical-use shape:
+  // people change rarely, project/decision entries live long, notes are
+  // ephemeral scratch.
+  const CATEGORY_RECENT_DAYS = {
+    projects: 180,
+    people: 365,
+    decisions: 90,
+    workflows: 60,
+    notes: 30,
+  };
+  const CATEGORY_UNUSED_DAYS = {
+    projects: 365,
+    people: 730,
+    decisions: 180,
+    workflows: 120,
+    notes: 90,
+  };
+  const DEFAULT_RECENT_DAYS = 30;
+  const DEFAULT_UNUSED_DAYS = 90;
+  const CATEGORY_ORDER = ['projects', 'people', 'decisions', 'workflows', 'notes'];
+  const CATEGORY_ICONS = {
+    projects: 'code',
+    people: 'group',
+    decisions: 'gavel',
+    workflows: 'account_tree',
+    notes: 'sticky_note_2',
+  };
+
+  function recentDaysFor(entry) {
+    return CATEGORY_RECENT_DAYS[entry.category] ?? DEFAULT_RECENT_DAYS;
+  }
+
+  function unusedDaysFor(entry) {
+    return CATEGORY_UNUSED_DAYS[entry.category] ?? DEFAULT_UNUSED_DAYS;
+  }
+
+  function isOlderThan(entry, days) {
+    const la = entry.last_accessed;
+    if (!la) return true;
+    const t = new Date(la).getTime();
+    if (!Number.isFinite(t)) return true;
+    return Date.now() - t > days * 24 * 60 * 60 * 1000;
+  }
+
+  // Kept for call sites that pass an explicit day count (filter, etc.).
+  function isUnused(entry, days) {
+    return isOlderThan(entry, days ?? unusedDaysFor(entry));
+  }
+
+  function countUnused(entries) {
+    let n = 0;
+    for (const e of entries) if (isOlderThan(e, unusedDaysFor(e))) n++;
+    return n;
+  }
+
+  function ensureUnusedButton() {
+    if (!el.knowledgeCategories) return null;
+    let btn = el.knowledgeCategories.querySelector('#btn-unused-filter');
+    if (btn) return btn;
+    btn = document.createElement('button');
+    btn.id = 'btn-unused-filter';
+    btn.type = 'button';
+    btn.className = 'unused-filter-btn';
+    btn.title = 'Show only entries not accessed in the last 90 days';
+    btn.innerHTML =
+      '<span class="material-symbols-outlined">schedule</span>' +
+      '<span class="unused-label">Unused (0)</span>';
+    btn.addEventListener('click', () => {
+      state.knowledge.onlyUnused = !state.knowledge.onlyUnused;
+      btn.classList.toggle('active', state.knowledge.onlyUnused);
+      K.renderKnowledge(state, el);
+    });
+    el.knowledgeCategories.appendChild(btn);
+    return btn;
+  }
+
+  function updateUnusedButton(unusedCount) {
+    const btn = ensureUnusedButton();
+    if (!btn) return;
+    const label = btn.querySelector('.unused-label');
+    if (label) label.textContent = 'Unused (' + unusedCount + ')';
+    btn.classList.toggle('active', !!state.knowledge.onlyUnused);
+    btn.hidden = unusedCount === 0 && !state.knowledge.onlyUnused;
+  }
+
+  function ensureBytypePanel() {
+    if (!el.knowledgeGrid || !el.knowledgeGrid.parentNode) return null;
+    let panel = K._root.getElementById('knowledge-bytype');
+    if (panel) return panel;
+    panel = document.createElement('div');
+    panel.id = 'knowledge-bytype';
+    panel.className = 'bytype-panel';
+    panel.setAttribute('aria-label', 'Access count by category');
+    panel.innerHTML =
+      '<div class="bytype-panel-header">' +
+      '<span class="bytype-title">By Type</span>' +
+      '<span class="bytype-legend">' +
+      '<span class="bytype-legend-item">' +
+      '<span class="bytype-legend-swatch recent"></span>' +
+      'Accessed 30d' +
+      '</span>' +
+      '<span class="bytype-legend-item">' +
+      '<span class="bytype-legend-swatch unused"></span>' +
+      'Unused 30d+' +
+      '</span>' +
+      '</span>' +
+      '</div>' +
+      '<div class="bytype-rows" id="knowledge-bytype-rows"></div>';
+    // Insert BEFORE the search bar so it sits in the stats area above the grid.
+    const searchBar = el.knowledgeGrid.parentNode.querySelector('.knowledge-search-bar');
+    const anchor = searchBar || el.knowledgeGrid;
+    anchor.parentNode.insertBefore(panel, anchor);
+    return panel;
+  }
+
+  function renderBytypeChart(entries) {
+    const panel = ensureBytypePanel();
+    if (!panel) return;
+    const rowsEl = panel.querySelector('#knowledge-bytype-rows');
+    if (!rowsEl) return;
+
+    const buckets = {};
+    for (const cat of CATEGORY_ORDER) buckets[cat] = { recent: 0, unused: 0 };
+    for (const e of entries) {
+      const cat = e.category || 'notes';
+      if (!buckets[cat]) buckets[cat] = { recent: 0, unused: 0 };
+      // Per-category recency window — people/projects are consulted less
+      // often by design, so the 30d default would wrongly paint them stale.
+      if (isOlderThan(e, recentDaysFor(e))) buckets[cat].unused++;
+      else buckets[cat].recent++;
+    }
+
+    const rows = CATEGORY_ORDER.map((cat) => {
+      const b = buckets[cat];
+      const total = b.recent + b.unused;
+      // Row-normalized: each bar sums to 100% within its row so the visual
+      // answers "how stale is this category?" without misleading gray filler.
+      // Cross-category volume stays readable via the right-side counts.
+      const denom = total || 1;
+      const recentPct = (b.recent / denom) * 100;
+      const unusedPct = (b.unused / denom) * 100;
+      const icon = CATEGORY_ICONS[cat] || 'article';
+      const bar = total
+        ? '<span class="bytype-bar-recent" style="width:' +
+          recentPct.toFixed(1) +
+          '%"></span>' +
+          '<span class="bytype-bar-unused" style="width:' +
+          unusedPct.toFixed(1) +
+          '%"></span>'
+        : '<span class="bytype-bar-empty"></span>';
+      return (
+        '<div class="bytype-row-label">' +
+        '<span class="material-symbols-outlined">' +
+        icon +
+        '</span>' +
+        K.esc(cat) +
+        '</div>' +
+        '<div class="bytype-bar" role="img" aria-label="' +
+        K.esc(cat) +
+        ': ' +
+        b.recent +
+        ' recent, ' +
+        b.unused +
+        ' unused">' +
+        bar +
+        '</div>' +
+        '<div class="bytype-row-count">' +
+        '<span class="count-recent">' +
+        b.recent +
+        '</span>' +
+        '<span class="count-sep">/</span>' +
+        '<span class="count-unused">' +
+        b.unused +
+        '</span>' +
+        '</div>'
+      );
+    }).join('');
+    K.morph(rowsEl, rows);
+  }
+
+  function decorateCards(entries) {
+    if (!el.knowledgeGrid) return;
+    const byPath = new Map();
+    for (const e of entries) byPath.set(e.path || e.id || '', e);
+    const cards = el.knowledgeGrid.querySelectorAll('.knowledge-card[data-path]');
+    cards.forEach((card) => {
+      const entry = byPath.get(card.getAttribute('data-path'));
+      if (!entry) return;
+
+      // Pin badge for evergreen entries — Material Symbols "push_pin".
+      const rightSlot = card.querySelector('.card-header-row > div');
+      if (rightSlot && entry.evergreen === true) {
+        if (!rightSlot.querySelector('.pin-badge')) {
+          const pin = document.createElement('span');
+          pin.className = 'pin-badge';
+          pin.title = 'Evergreen — exempt from decay';
+          pin.setAttribute('aria-label', 'Evergreen entry');
+          pin.innerHTML = '<span class="material-symbols-outlined">push_pin</span>';
+          rightSlot.insertBefore(pin, rightSlot.firstChild);
+        }
+      }
+
+      // Author footer tag — only if frontmatter provided one.
+      if (entry.author && typeof entry.author === 'string') {
+        if (!card.querySelector('.card-author')) {
+          const tag = document.createElement('span');
+          tag.className = 'card-author';
+          tag.title = 'Author';
+          tag.textContent = entry.author;
+          card.appendChild(tag);
+        }
+      }
+    });
+  }
+
+  function installKnowledgeEnhancements() {
+    const original = K.renderKnowledge;
+    if (!original || original.__v181wrapped) return;
+
+    const wrapped = function (s, e) {
+      const entries = s.knowledge.entries || [];
+      const unusedCount = countUnused(entries);
+
+      // Apply the "unused only" filter at the source — the inner renderer
+      // still does its own category filter on top of this.
+      const original_entries = s.knowledge.entries;
+      if (s.knowledge.onlyUnused) {
+        s.knowledge.entries = entries.filter((x) => isOlderThan(x, unusedDaysFor(x)));
+      }
+      try {
+        original(s, e);
+      } finally {
+        s.knowledge.entries = original_entries;
+      }
+
+      renderBytypeChart(entries);
+      updateUnusedButton(unusedCount);
+      decorateCards(
+        s.knowledge.onlyUnused
+          ? s.knowledge.entries.filter((x) => isOlderThan(x, unusedDaysFor(x)))
+          : entries,
+      );
+    };
+    wrapped.__v181wrapped = true;
+    K.renderKnowledge = wrapped;
+  }
+
   // ── Init ───────────────────────────────────────────────────────────────────
 
   async function init() {
@@ -578,6 +845,9 @@
     bindEvents();
     K.initSessionScroll(state, el);
     if (K.setupGraphControls) K.setupGraphControls();
+    installKnowledgeEnhancements();
+    ensureUnusedButton();
+    ensureBytypePanel();
     wsConnect();
 
     // Restore tab from URL hash (standalone mode only)

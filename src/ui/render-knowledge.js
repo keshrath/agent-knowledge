@@ -73,7 +73,7 @@
         el.knowledgeSearchResults.style.display = 'none';
         el.knowledgeGrid.style.display = '';
         el.knowledgeEmpty.classList.add('hidden');
-        renderKnowledge(state, el);
+        K.renderKnowledge(state, el);
         return;
       }
       try {
@@ -148,7 +148,7 @@
       state.knowledge.entries = entries;
       state.stats.knowledgeCount = entries.length;
       K.updateStats(state, el);
-      renderKnowledge(state, el);
+      K.renderKnowledge(state, el);
     } catch (err) {
       K.toast(`Failed to load knowledge: ${err.message}`, 'error');
     }
@@ -186,7 +186,7 @@
             state.knowledge.duplicateClusters[entry.path] = cluster;
           }
         }
-        renderKnowledge(state, el);
+        K.renderKnowledge(state, el);
         K.openPanel('consolidate', report);
       } else {
         K.toast('No duplicate clusters found', 'success');

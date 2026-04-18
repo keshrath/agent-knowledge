@@ -59,6 +59,23 @@ describe('dashboard HTTP server', () => {
     }
   });
 
+  it('GET /api/knowledge rows surface evergreen, author, and last_accessed', async () => {
+    // v1.8.1: dashboard extends row shape with evergreen (boolean),
+    // author (string|null), and last_accessed (string|null).
+    const { status, body } = await fetch('/api/knowledge');
+    expect(status).toBe(200);
+    const data = JSON.parse(body);
+    expect(Array.isArray(data)).toBe(true);
+    for (const row of data.slice(0, 5)) {
+      expect(row).toHaveProperty('evergreen');
+      expect(typeof row.evergreen).toBe('boolean');
+      expect(row).toHaveProperty('author');
+      expect(row.author === null || typeof row.author === 'string').toBe(true);
+      expect(row).toHaveProperty('last_accessed');
+      expect(row.last_accessed === null || typeof row.last_accessed === 'string').toBe(true);
+    }
+  });
+
   it('GET /api/sessions returns session-listing rows with meta fields', async () => {
     const { status, body } = await fetch('/api/sessions');
     expect(status).toBe(200);

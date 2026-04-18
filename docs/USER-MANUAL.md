@@ -212,15 +212,17 @@ Knowledge base CRUD, git sync, and session-start hydration.
 
 **Parameters:**
 
-| Name           | Type   | Required | Description                                                                                                                 |
-| -------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `action`       | string | Yes      | One of: `list`, `read`, `write`, `delete`, `sync`, `wakeup`                                                                 |
-| `category`     | string | No       | [list/wakeup] Filter by category; [write] Target directory. One of: `projects`, `people`, `decisions`, `workflows`, `notes` |
-| `tag`          | string | No       | [list] Filter by tag                                                                                                        |
-| `path`         | string | No       | [read/delete] Relative path, e.g. `projects/my-project.md`                                                                  |
-| `filename`     | string | No       | [write] Filename with or without .md extension                                                                              |
-| `content`      | string | No       | [write] Full Markdown content (max 1MB)                                                                                     |
-| `token_budget` | number | No       | [wakeup] Max tokens for the rendered L0+L1 blob (chars/4 estimate, default 800, range 50–8000)                              |
+| Name              | Type   | Required | Description                                                                                                                   |
+| ----------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `action`          | string | Yes      | One of: `list`, `read`, `write`, `delete`, `sync`, `wakeup`                                                                   |
+| `category`        | string | No       | [list/wakeup] Filter by category; [write] Target directory. One of: `projects`, `people`, `decisions`, `workflows`, `notes`   |
+| `tag`             | string | No       | [list] Filter by tag                                                                                                          |
+| `path`            | string | No       | [read/delete] Relative path, e.g. `projects/my-project.md`                                                                    |
+| `filename`        | string | No       | [write] Filename with or without .md extension                                                                                |
+| `content`         | string | No       | [write] Full Markdown content (max 1MB)                                                                                       |
+| `token_budget`    | number | No       | [wakeup] Max tokens for the rendered blob (chars/4 estimate, default 800, range 50–8000)                                      |
+| `sections`        | string | No       | [wakeup, v1.8.1] Comma-separated section list in priority order. See below for valid names.                                   |
+| `section_budgets` | object | No       | [wakeup, v1.8.1] Per-section token budgets, e.g. `{"identity": 200, "top_weighted": 400}`. Unspecified sections share evenly. |
 
 **Action: list**
 
@@ -273,23 +275,40 @@ knowledge with action "sync"
 
 **Action: wakeup**
 
-Return a small "L0 + L1" context blob: identity (from `~/agent-knowledge/identity.md`) plus the highest-weighted entries, fit under a token budget. Call once at session start so the agent has its world loaded before issuing any real search.
+Return a token-budgeted, section-priority context bundle. Call once at session start so the agent has its world loaded before issuing any real search.
 
-Weight = `recency × log(size+1)` — recently-edited and substantial entries float to the top. The blob is rendered as Markdown with one bullet per L1 entry; each bullet is a short excerpt.
+**Section-priority packing (v1.8.1):** the bundle is assembled from an ordered list of sections. Each section gets a per-section token budget; the packer fills them top-to-bottom, redistributes any unused budget to later sections, and stops once the global `token_budget` is hit.
+
+Default section order (drag-to-reorder in a later UI pass):
+
+1. `identity` — L0 identity from `~/agent-knowledge/identity.md` (always first).
+2. `active_tasks` — placeholder pointing at agent-tasks (no in-repo task data today).
+3. `recent_decisions` — newest entries in `decisions/`, up to K.
+4. `known_gotchas` — entries tagged `gotcha` across any category.
+5. `last_session_summary` — condensed meta of the most recent indexed session.
+6. `top_weighted` — the legacy L1 logic: `recency × log(size+1)`.
+7. `semantic_fallback` — pure top-weighted catch-all if earlier sections under-filled the budget.
+
+Empty sections emit a short placeholder rather than disappearing silently, so downstream UIs keep a stable shape.
 
 ```
 knowledge with action "wakeup"
 knowledge with action "wakeup", token_budget 1200
 knowledge with action "wakeup", category "projects"
+knowledge with action "wakeup", sections "identity,recent_decisions,top_weighted"
+knowledge with action "wakeup", token_budget 2000, section_budgets { "identity": 200, "recent_decisions": 400, "top_weighted": 800 }
 ```
+
+**Backwards compat:** calling with only `token_budget` (+ optional `category`) and no `sections` / `section_budgets` routes to the v1.8.0 `identity + top_weighted` behaviour — the `rendered` output stays shape-compatible for existing callers.
 
 **Response:**
 
 - `identity` — text from `identity.md`, or a default placeholder.
-- `entries` — array of `{ path, title, weight, excerpt }`, top-weighted first.
+- `entries` — array of `{ path, title, weight, excerpt }` from the `top_weighted` section (back-compat field).
+- `sections` — array of `{ name, content, budget, used, truncated, empty }`, one per emitted section.
 - `rendered` — the assembled Markdown blob ready to paste into a system prompt.
 - `token_estimate` — `chars / 4`.
-- `truncated` — `true` when the budget cut off the L1 list.
+- `truncated` — `true` if any section was cut to fit the budget.
 
 ---
 
@@ -602,13 +621,16 @@ Analysis tools for knowledge base maintenance.
 
 **Parameters:**
 
-| Name          | Type   | Required | Description                                                                      |
-| ------------- | ------ | -------- | -------------------------------------------------------------------------------- |
-| `action`      | string | Yes      | One of: `consolidate`, `reflect`, `god_nodes`, `bridges`, `gaps`, `brief`        |
-| `category`    | string | No       | Scan only this category (omit for all)                                           |
-| `threshold`   | number | No       | [consolidate] Similarity threshold 0-1 (default: 0.5)                            |
-| `max_entries` | number | No       | [reflect/gaps] Max entries to include (default: 20 for reflect, 30 for gaps)     |
-| `top_n`       | number | No       | [god_nodes/bridges] Max entries to return (default: 10 for god_nodes, 5 bridges) |
+| Name               | Type   | Required | Description                                                                              |
+| ------------------ | ------ | -------- | ---------------------------------------------------------------------------------------- |
+| `action`           | string | Yes      | One of: `consolidate`, `reflect`, `god_nodes`, `bridges`, `gaps`, `brief`, `search_gaps` |
+| `category`         | string | No       | Scan only this category (omit for all)                                                   |
+| `threshold`        | number | No       | [consolidate] Similarity threshold 0-1 (default: 0.5)                                    |
+| `max_entries`      | number | No       | [reflect/gaps] Max entries to include (default: 20 for reflect, 30 for gaps)             |
+| `top_n`            | number | No       | [god_nodes/bridges] Max entries to return (default: 10 for god_nodes, 5 bridges)         |
+| `since_days`       | number | No       | [search_gaps] Lookback window in days (default: 30)                                      |
+| `min_count`        | number | No       | [search_gaps] Minimum occurrence count per merged group (default: 1)                     |
+| `group_similarity` | number | No       | [search_gaps] Jaccard token similarity threshold for grouping (default: 0.7)             |
 
 **Action: consolidate**
 
@@ -669,6 +691,23 @@ Returns a compact summary of the knowledge base state (cached 1 hour, invalidate
 No parameters.
 
 Returns: `{ total_entries, total_edges, core_concepts, active_projects, recent_decisions, stale_count, gap_count, generated_at, text }`. The `text` field is a ~200 token plain-text summary suitable for injection into agent prompts.
+
+**Action: `search_gaps`**
+
+Returns zero-result `knowledge_search` queries grouped by similarity — the single strongest signal for "what knowledge entries should I write next?". Every `knowledge_search` call is logged to a small `query_log` SQLite table (query text scrubbed for secrets before insertion). Queries that returned zero results are merged into groups via token-set Jaccard similarity, so `"gitlab token"` and `"gitlab credentials"` collapse into one row.
+
+| Parameter          | Type   | Default | Description                                                       |
+| ------------------ | ------ | ------- | ----------------------------------------------------------------- |
+| `since_days`       | number | 30      | Lookback window in days                                           |
+| `min_count`        | number | 1       | Minimum occurrence count per merged group (raise to filter noise) |
+| `group_similarity` | number | 0.7     | Jaccard token similarity threshold for merging queries (0-1)      |
+
+Returns: array of `{ query, count, last_seen, similar_queries? }` sorted by count descending, then by `last_seen` descending. `query` is the most-recent query text in the group; `similar_queries` lists the other variants collapsed into the same group (omitted when the group has only one member).
+
+```
+knowledge_analyze with action "search_gaps"
+knowledge_analyze with action "search_gaps", since_days 7, min_count 3
+```
 
 ---
 

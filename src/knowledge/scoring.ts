@@ -21,6 +21,12 @@ export interface EntryScore {
   last_accessed: string;
   maturity: Maturity;
   created_at: string;
+  /**
+   * ISO timestamp when the agent explicitly confirmed the entry is still
+   * accurate via `knowledge(action: "verify")`. Distinct from `last_accessed`:
+   * reads happen incidentally, verification is deliberate.
+   */
+  verified_at?: string | null;
 }
 
 const MATURITY_MULTIPLIERS: Record<Maturity, number> = {
@@ -109,11 +115,58 @@ export class EntryScoring {
         );
       `);
 
+      // v1.8.1 migration: add `verified_at` column if absent. Non-destructive —
+      // existing rows get NULL which means "never verified" and is handled
+      // explicitly by the scoring helpers.
+      const cols = this.db.prepare(`PRAGMA table_info(entry_scores)`).all() as Array<{
+        name: string;
+      }>;
+      if (!cols.some((c) => c.name === 'verified_at')) {
+        this.db.exec(`ALTER TABLE entry_scores ADD COLUMN verified_at TEXT;`);
+      }
+
       this.initialized = true;
     } catch (err) {
       console.error(`[knowledge] Failed to initialize scoring: ${err}`);
       throw err;
     }
+  }
+
+  /**
+   * Stamp an entry as "freshly verified" — the agent has just confirmed its
+   * content is still accurate. Creates the entry_scores row if absent.
+   * Returns the updated row so the caller can surface the timestamp.
+   */
+  markVerified(entryPath: string, whenIso?: string): EntryScore {
+    this.init();
+    if (!this.db) throw new Error('Scoring database not available');
+    const when = whenIso ?? new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO entry_scores (entry_path, access_count, last_accessed, maturity, verified_at)
+         VALUES (?, 0, NULL, 'candidate', ?)
+         ON CONFLICT(entry_path)
+         DO UPDATE SET verified_at = excluded.verified_at`,
+      )
+      .run(entryPath, when);
+    return this.db
+      .prepare('SELECT * FROM entry_scores WHERE entry_path = ?')
+      .get(entryPath) as EntryScore;
+  }
+
+  /**
+   * Days since the entry was last verified. `null` if never verified.
+   */
+  verificationAgeDays(entryPath: string, nowMs?: number): number | null {
+    this.init();
+    if (!this.db) return null;
+    const row = this.db
+      .prepare('SELECT verified_at FROM entry_scores WHERE entry_path = ?')
+      .get(entryPath) as { verified_at: string | null } | undefined;
+    if (!row || !row.verified_at) return null;
+    const t = new Date(row.verified_at).getTime();
+    if (!Number.isFinite(t)) return null;
+    return Math.max(0, ((nowMs ?? Date.now()) - t) / (24 * 3600_000));
   }
 
   /**

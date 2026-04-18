@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.8.1 (2026-04-18) — staleness signal + search-gap log + section-priority context + dashboard polish + access-tracking measurement fix
+
+Additive upgrades. Response shapes gain new optional fields (`freshness` on search hits, `evergreen`/`author`/`last_accessed` on `GET /api/knowledge` rows, three new fields on `StalenessSignal`) but no existing fields were removed or reshaped — strict consumers relying on unknown-field tolerance are unaffected. Every new behaviour is automatic or additive — no agent-proactive action required.
+
+### Added
+
+**Automatic staleness detection** (the "old entries work against you" problem, addressed without LLM judge or transcript regex):
+
+- `src/knowledge/freshness.ts` — cross-references file paths mentioned in each entry body against `filesModified` in recent session summaries (data we already extract). An entry mentioning `src/auth.ts` whose body hasn't been edited while 5 recent sessions touched `src/auth.ts` is a staleness candidate. No regex on free-form transcripts, no false-positive tarpit.
+- `knowledge_analyze(action: "stale_by_code_activity")` — returns ranked `{entry, touched_files, touching_sessions, body_age_days, lag_days, confidence}`. Evergreen entries exempt by design.
+- **Symbol-presence precision layer** — `staleByCodeActivity` extracts identifiers the entry quotes (inline backticks + fenced blocks, ≥3 chars, strict identifier shape) and checks whether they still appear in the touched files. Confidence × 0.3 when every named symbol is still present (entry's concrete claims likely hold), scaled linearly for partial matches, full weight when all named symbols are missing (confirmed drift). Entries that quote no verifiable identifiers fall through with `symbol_evidence: "not_applicable"`. File-activity alone no longer fires at high confidence — a signature has to be gone. `StalenessSignal` gains three additive fields: `symbol_evidence`, `symbols_checked`, `symbols_missing`.
+- `scoring.ts` — new `verified_at` column in `entry_scores` (non-destructive migration) + `markVerified` + `verificationAgeDays` helpers.
+- **Auto-verify stamp in the promoter** — entries written by the scored promoter (`promote({mode: "apply"})`) are by construction fresh (they're aggregated from current session activity); the promoter now stamps `verified_at` automatically. Fully background, no agent call needed.
+- **Freshness metadata on every search hit** — every `knowledge_search` result now carries `freshness: {body_age_days, last_accessed, access_count, verified_at, verification_age_days, evergreen}`. Agent reads the trust signal, forms its own judgment — no policy demotion imposed by us.
+
+**Access-tracking measurement fix**:
+
+- `recordAccess` was previously called only from `knowledge(action: read)`. The primary knowledge-consumption path — L1 entries packed into the first-prompt wakeup bundle — didn't count, and neither did `knowledge_search` hits. The bytype chart was faithfully reporting "mostly unused" against a broken measurement. Fixed in two places: `buildContextBundle` now calls `recordBulkAccess` on every entry that makes it into the bundle (`src/wakeup.ts`); `knowledge_search` bumps access for every knowledge hit (`src/tool-handlers.ts`). Sessions hits don't bump.
+- **Per-category decay windows** replace the flat 30d/90d defaults. People entries are consulted once a quarter and aren't stale; notes are scratch and age out fast. New defaults: `projects` 180d/365d, `people` 365d/730d, `decisions` 90d/180d, `workflows` 60d/120d, `notes` 30d/90d. The bytype chart and the "Unused" filter both honor the per-category threshold. Unknown categories keep the 30d/90d flat default. Currently UI-side only — the `staleByCodeActivity` confidence formula still uses a flat `lag_days / 60` saturation point; category-aware staleness tracked for v1.9.
+
+**Search-gap tracking**:
+
+- `src/knowledge/query-log.ts` — lightweight `query_log` table inside `knowledge-scores.db`. `knowledge_search` calls are logged with `{query, project, results_count, created_at}`; obvious-secret patterns (API keys, JWTs, bearer tokens, `.env`-style assignments) are redacted via `scrubContent` before insert. Short opaque tokens not matching a pattern are stored verbatim — don't treat the log as a secret-proof sink. Best-effort: log failures never fail the search.
+- `knowledge_analyze(action: "search_gaps")` — returns zero-result queries from the last `since_days` window, grouped by token-Jaccard similarity (`group_similarity` tunable, default `0.35`). The single strongest signal for "what entries should I write next?" — agents searching for `"gitlab credentials"` three times and getting nothing surfaces the entry that should exist. Threshold defaults low (0.35) because short queries share few tokens even when topically related; 0.7 would force every query into its own group.
+
+**Section-priority context packer** (evolves `wakeup`):
+
+- `src/wakeup.ts` — new `buildContextBundle(options)` with seven priority-ordered sections filled top-to-bottom within a token budget: `identity` → `active_tasks` → `recent_decisions` → `known_gotchas` → `last_session_summary` → `top_weighted` → `semantic_fallback`. Unused section budget redistributes to later sections; `truncated` flagged when any section was cut.
+- `knowledge(action: "wakeup")` new params: `sections` (CSV, overrides default order) and `section_budgets` (JSON per-section overrides). Omit both and the handler routes to the v1.8.0 `wakeup` wrapper — same identity-plus-L1-list shape, though the section separator is `\n\n` (was `\n`) so the output is shape-compatible rather than byte-identical.
+
+**Dashboard polish**:
+
+- **"Unused" filter** in the Knowledge tab — count in the button label, auto-hides when zero; orange-toned action cue. Uses per-category thresholds so evergreen-shaped categories aren't falsely flagged.
+- **"By Type" access-count bar chart** — per-category split, row-normalized bars (each row fills 100% of its track; green share = recently accessed, orange = unused; volume comparison via the right-side `accessed/unused` numbers). HTML/CSS bars, no chart library.
+- **Pinned rendering for `evergreen: true` entries** — Material Symbols `push_pin` icon badge on each card (FILL=1, wght=500, accent color). No emoji.
+- **Author frontmatter field** — new optional `author: <string>` in entry frontmatter; surfaced as a muted `by <author>` chip in the card footer. Store/listEntries/readEntry propagate it.
+- `GET /api/knowledge` response rows now explicitly carry `evergreen`, `author`, `last_accessed`.
+
+### Changed
+
+- `search.ts` `SearchResult` type grew a `freshness?: FreshnessMeta` field. Additive — existing callers ignoring the field keep working.
+- `store.ts` `KnowledgeEntry` type grew `author?: string`.
+- `tool-handlers.ts` `handleKnowledge` wakeup case accepts `sections` + `section_budgets` (both optional, back-compat preserved).
+
+### Fixed
+
+- **UI wrapper bypass** — `src/ui/render-knowledge.js` internal calls at lines 76/151/189 went through the local `renderKnowledge` ref, skipping the `K.renderKnowledge` wrapper installed by `installKnowledgeEnhancements`. Consequence: on initial load, search clear, and consolidate, the bytype chart / unused count / `decorateCards` (pin badges + author chips) never ran. Pin badges + author chips were invisible in normal usage. Fixed by routing the three internal call sites through `K.renderKnowledge`.
+- **WS state snapshot lacked scoring enrichment** — `dashboard.ts` `fullState()` sent `listEntries()` raw, without scoring, so state.knowledge.entries arrived at the UI with `last_accessed: undefined` and every call to `isUnused()` returned true. Fixed by enriching the WS payload with `maturity`, `access_count`, `last_accessed` the same way `GET /api/knowledge` does.
+
+### Tests
+
+557 passing (+23 new over 1.8.0's 534): 7 freshness detector, 9 query-log, 6 context-bundle, 1 dashboard row-shape. Every new module has tests with numeric bounds and DI hooks rather than ESM module mocking.
+
+### Not done (honestly deferred)
+
+- Systemic test-audit items still open (regex-as-unit-test consolidation, 8 FLAKY-RISK tests flagged in the 1.8.0 pass) — carried over.
+- Real-world write-bench Cohen-kappa calibration — requires human spot-check pass on a larger session corpus than we currently have locally.
+
 ## 1.8.0 (2026-04-18) — agent-UX pass (**breaking**)
 
 Three-axis change: retrieval grew a diversity knob and explainability, auto-distillation replaced with a scored + gated promoter, and new lifecycle hooks (pre-compaction flush, session-start wakeup, first-prompt knowledge injection). All six existing MCP tools stay visible.

@@ -27,7 +27,7 @@ const KNOWLEDGE_TOOL = {
     '"list" (browse entries), "read" (get entry content), ' +
     '"write" (create/update entry, auto git sync), ' +
     '"delete" (remove entry, auto git sync), "sync" (manual git pull + push), ' +
-    '"wakeup" (return token-budgeted L0 identity + L1 top-weight entries — call once at session start).',
+    '"wakeup" (return token-budgeted section-priority context bundle — identity, active_tasks, recent_decisions, known_gotchas, last_session_summary, top_weighted, semantic_fallback — call once at session start).',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -39,6 +39,20 @@ const KNOWLEDGE_TOOL = {
       token_budget: {
         type: 'number',
         description: '[wakeup] Max tokens to render (chars/4 estimate, default 800)',
+      },
+      sections: {
+        type: 'string',
+        description:
+          '[wakeup] Comma-separated, ordered section list. ' +
+          'Valid: identity, active_tasks, recent_decisions, known_gotchas, last_session_summary, top_weighted, semantic_fallback. ' +
+          'Default: all seven in that order. Omit to preserve v1.8.0 behaviour.',
+      },
+      section_budgets: {
+        type: 'object',
+        description:
+          '[wakeup] Per-section token-budget overrides, e.g. {"identity": 200, "top_weighted": 400}. ' +
+          'Unspecified sections split the remainder evenly. Unused budget redistributes to later sections.',
+        additionalProperties: { type: 'number' },
       },
       category: {
         type: 'string',
@@ -347,18 +361,32 @@ const KNOWLEDGE_ANALYZE_TOOL = {
   name: 'knowledge_analyze',
   description:
     'Analysis tools: find duplicates, unconnected entries, most-connected concepts (god nodes), ' +
-    'bridge entries, knowledge gaps, or generate a compact knowledge brief. ' +
-    'Actions: consolidate, reflect, god_nodes, bridges, gaps, brief.',
+    'bridge entries, knowledge gaps, zero-result search queries, stale-by-code-activity entries, ' +
+    'or generate a compact knowledge brief. ' +
+    'Actions: consolidate, reflect, god_nodes, bridges, gaps, brief, search_gaps, stale_by_code_activity.',
   inputSchema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['consolidate', 'reflect', 'god_nodes', 'bridges', 'gaps', 'brief'],
+        enum: [
+          'consolidate',
+          'reflect',
+          'god_nodes',
+          'bridges',
+          'gaps',
+          'brief',
+          'search_gaps',
+          'stale_by_code_activity',
+        ],
         description:
           'Action: consolidate (find duplicates), reflect (find unconnected entries), ' +
           'god_nodes (most-connected entries), bridges (cross-cluster connectors), ' +
-          'gaps (entries with 0-1 edges), brief (compact knowledge base summary)',
+          'gaps (entries with 0-1 edges), brief (compact knowledge base summary), ' +
+          'search_gaps (zero-result knowledge_search queries grouped by similarity — ' +
+          'the single best signal for "what entries should I write next?"), ' +
+          'stale_by_code_activity (entries whose referenced file paths were modified in ' +
+          'recent sessions after the entry body was last edited — automatic staleness signal, v1.8.1).',
       },
       category: {
         type: 'string',
@@ -376,6 +404,26 @@ const KNOWLEDGE_ANALYZE_TOOL = {
       top_n: {
         type: 'number',
         description: 'Number of results (action=god_nodes default: 10, action=bridges default: 5)',
+      },
+      since_days: {
+        type: 'number',
+        description:
+          '[search_gaps] Lookback window in days (default: 30). Only queries logged within this window are considered.',
+      },
+      min_count: {
+        type: 'number',
+        description:
+          '[search_gaps] Minimum occurrence count per merged group (default: 1). Raise to surface only repeated misses.',
+      },
+      group_similarity: {
+        type: 'number',
+        description:
+          '[search_gaps] Jaccard token similarity threshold for merging near-duplicate queries (default: 0.35, range 0-1). Low because short queries yield low Jaccard even when topically related.',
+      },
+      min_touching_sessions: {
+        type: 'number',
+        description:
+          "[stale_by_code_activity] Minimum distinct sessions that must have modified one of the entry's referenced files for it to be flagged (default: 1).",
       },
     },
     required: ['action'],
