@@ -297,26 +297,37 @@ knowledge with action "wakeup", category "projects"
 
 Search across sessions and knowledge entries. Supports general search and scoped recall.
 
+**Response shape** (v1.8): `{ mode, sessions, knowledge }`.
+
+- `mode: "general"` — hybrid TF-IDF + semantic across both sources.
+- `mode: "scoped"` — sessions-only filtered recall. `knowledge` is always `[]` in this mode (scoped search is session-only by design — the response now says so instead of the v1.7 silent polymorphism).
+
 **Parameters:**
 
-| Name          | Type    | Required | Description                                                                                                                               |
-| ------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `query`       | string  | Yes      | Search query -- supports keywords and phrases                                                                                             |
-| `scope`       | string  | No       | Search scope: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`. When provided, performs scoped recall in sessions only. |
-| `project`     | string  | No       | Restrict to sessions from this project                                                                                                    |
-| `role`        | string  | No       | Filter by message role: `user`, `assistant`, `all` (default: all, ignored when scope is set)                                              |
-| `max_results` | number  | No       | Maximum results (default: 20)                                                                                                             |
-| `ranked`      | boolean | No       | Use TF-IDF ranking (default: true, ignored when scope is set)                                                                             |
-| `semantic`    | boolean | No       | Blend semantic similarity with TF-IDF (default: true)                                                                                     |
+| Name            | Type    | Required | Description                                                                                                                                 |
+| --------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`         | string  | Yes      | Search query -- supports keywords and phrases                                                                                               |
+| `scope`         | string  | No       | Search scope: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`. When provided, performs scoped recall in sessions only.   |
+| `project`       | string  | No       | Restrict to sessions from this project                                                                                                      |
+| `role`          | string  | No       | Filter by message role: `user`, `assistant`, `all` (default: all, ignored when scope is set)                                                |
+| `max_results`   | number  | No       | Maximum results (default: 20)                                                                                                               |
+| `ranked`        | boolean | No       | Use TF-IDF ranking (default: true, ignored when scope is set)                                                                               |
+| `semantic`      | boolean | No       | Blend semantic similarity with TF-IDF (default: true)                                                                                       |
+| `category`      | string  | No       | Category hint for the knowledge leg: `projects`, `people`, `decisions`, `workflows`, `notes`                                                |
+| `category_mode` | string  | No       | How `category` is applied: `boost` (v1.8 default, non-matches kept but matching entries get a 1.25× boost) or `filter` (legacy hard-filter) |
+| `mmr`           | boolean | No       | Apply Maximal Marginal Relevance re-ranking to knowledge hits. Default `false`. Kills near-duplicate clusters in the top-K.                 |
+| `mmr_lambda`    | number  | No       | MMR tradeoff, `0`–`1` (default `0.7`). `1.0` = pure relevance; `0.0` = pure diversity.                                                      |
+| `explain`       | boolean | No       | When `true`, each knowledge hit carries a `score_components` breakdown: `{bm25, decay, maturity, confidence, category_boost, mmr_penalty}`. |
 
 **General search** (no scope):
 
 ```
 knowledge_search with query "authentication error handling"
 knowledge_search with query "database migration", project "backend"
+knowledge_search with query "why postgres", category "decisions", mmr true, explain true
 ```
 
-Returns both session matches and knowledge base matches.
+Returns `{ mode: "general", sessions, knowledge }` — both session matches and knowledge base matches.
 
 **Scoped recall** (with scope):
 
@@ -389,16 +400,22 @@ knowledge_session with action "summary", session_id "abc-123-def"
 
 ### knowledge_admin
 
-Admin operations for configuration, index stats, and embedding management.
+Admin operations for configuration, index stats, embedding management, and the v1.8 scored promoter.
 
 **Parameters:**
 
-| Name           | Type    | Required | Description                                              |
-| -------------- | ------- | -------- | -------------------------------------------------------- |
-| `action`       | string  | Yes      | One of: `status`, `config`, `rebuild_embeddings`         |
-| `git_url`      | string  | No       | [config] Git remote URL (empty string to remove)         |
-| `memory_dir`   | string  | No       | [config] Local knowledge base directory (empty to reset) |
-| `auto_distill` | boolean | No       | [config] Enable/disable session distillation             |
+| Name                 | Type    | Required | Description                                                                                         |
+| -------------------- | ------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `action`             | string  | Yes      | One of: `status`, `config`, `rebuild_embeddings`, `prune_orphans`, `vacuum`, `promote`              |
+| `git_url`            | string  | No       | [config] Git remote URL (empty string to remove)                                                    |
+| `memory_dir`         | string  | No       | [config] Local knowledge base directory (empty to reset)                                            |
+| `auto_distill`       | boolean | No       | [config] Enable/disable scheduled promotion (governs the promoter, not the legacy regex distiller)  |
+| `vacuum`             | boolean | No       | [prune_orphans] Run VACUUM after pruning (default `true`)                                           |
+| `force_vacuum`       | boolean | No       | [prune_orphans] Run VACUUM even when no orphans were pruned                                         |
+| `promote_mode`       | string  | No       | [promote] `explain` (default — read-only, returns score breakdowns) or `apply` (write + git-commit) |
+| `min_score`          | number  | No       | [promote] Override minScore gate (default `0.5`)                                                    |
+| `min_recall_count`   | number  | No       | [promote] Override minRecallCount gate (default `2`)                                                |
+| `min_unique_queries` | number  | No       | [promote] Override minUniqueQueries gate (default `2`)                                              |
 
 **Action: status**
 
@@ -421,7 +438,7 @@ knowledge_admin with action "config"
 # Update git URL
 knowledge_admin with action "config", git_url "https://github.com/user/memory.git"
 
-# Disable auto-distillation
+# Disable auto-promotion (the v1.8 scored promoter runs on backgroundIndex)
 knowledge_admin with action "config", auto_distill false
 ```
 
@@ -435,36 +452,81 @@ knowledge_admin with action "rebuild_embeddings"
 
 Wipes existing vectors, re-creates the store with the current provider's dimensions, and re-embeds all entries. Returns processed/failed counts.
 
+**Action: prune_orphans**
+
+Delete vector embeddings for sessions no longer present on disk. Optionally follows with VACUUM to reclaim pages.
+
+```
+knowledge_admin with action "prune_orphans"
+knowledge_admin with action "prune_orphans", force_vacuum true
+```
+
+**Action: vacuum**
+
+Reclaim free SQLite pages in the vector store.
+
+```
+knowledge_admin with action "vacuum"
+```
+
+**Action: promote** (v1.8)
+
+Run the scored + gated promoter. Every project-level candidate is scored on six weighted signals (`relevance 0.30, frequency 0.24, queryDiversity 0.15, recency 0.15, consolidation 0.10, conceptualRichness 0.06`) and tested against three independent gates (`minScore`, `minRecallCount`, `minUniqueQueries` — all must pass). Candidates that pass are promoted to `projects/<id>.md`; every run drops an audit trail in `~/agent-knowledge/.dreams/YYYY-MM-DD.md`.
+
+**Grounded rehydration**: if a candidate's source session file is no longer on disk, the promoter skips it. Prevents writing content the user has deleted.
+
+```
+# Score candidates + write the diary, DO NOT touch the KB
+knowledge_admin with action "promote"
+
+# Actually promote + git-commit
+knowledge_admin with action "promote", promote_mode "apply"
+
+# Tighten gates for a conservative run
+knowledge_admin with action "promote", promote_mode "apply", min_score 0.7, min_recall_count 3
+```
+
+Returns `{ runStartedAt, runFinishedAt, mode, candidates[], promotedPaths[], skippedIds[], diaryPath, totals }`.
+
 ---
 
 ### knowledge_graph
 
-Knowledge graph operations for creating and traversing relationships between entries.
+Knowledge graph operations with temporal validity and code-structure support. Seven actions cover creation, removal, time-scoped invalidation, directed BFS traversal, and bulk ingestion for code graphs.
 
 **Parameters:**
 
-| Name       | Type   | Required | Description                                                            |
-| ---------- | ------ | -------- | ---------------------------------------------------------------------- |
-| `action`   | string | Yes      | One of: `link`, `unlink`, `list`, `traverse`                           |
-| `source`   | string | Varies   | [link/unlink] Source entry path                                        |
-| `target`   | string | Varies   | [link/unlink] Target entry path                                        |
-| `entry`    | string | No       | [list] Filter by entry path; [traverse] BFS start node                 |
-| `rel_type` | string | Varies   | Relationship type (required for link, optional filter for unlink/list) |
-| `strength` | number | No       | [link] Edge strength 0-1 (default: 0.5)                                |
-| `depth`    | number | No       | [traverse] Max traversal depth in hops (default: 2)                    |
+| Name         | Type   | Required | Description                                                                                                                        |
+| ------------ | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `action`     | string | Yes      | One of: `link`, `unlink`, `invalidate`, `list`, `traverse`, `bulk_link`, `unlink_by_origin`                                        |
+| `source`     | string | Varies   | [link/unlink/invalidate] Source entry path                                                                                         |
+| `target`     | string | Varies   | [link/unlink/invalidate] Target entry path                                                                                         |
+| `entry`      | string | No       | [list] Filter by entry path; [traverse] BFS start node                                                                             |
+| `rel_type`   | string | Varies   | Relationship type (required for link, optional filter for unlink/invalidate/list/traverse)                                         |
+| `strength`   | number | No       | [link] Edge strength 0-1 (default: 0.5)                                                                                            |
+| `depth`      | number | No       | [traverse] Max traversal depth in hops (default: 2)                                                                                |
+| `valid_from` | string | No       | [link] ISO date the fact became true. Null/omitted = unbounded.                                                                    |
+| `valid_to`   | string | No       | [link/invalidate] ISO date the fact stopped being true. For `invalidate`, defaults to today.                                       |
+| `as_of`      | string | No       | [list/traverse] Only return edges valid at this ISO date.                                                                          |
+| `direction`  | string | No       | [traverse] `outbound` (source→target), `inbound` (target→source), or `both` (default — undirected).                                |
+| `edges`      | array  | No       | [bulk_link] Batch of `{source, target, rel_type, strength?, origin?}` edges. Used by knowledge-ingest for code graphs.             |
+| `origin`     | string | No       | [unlink_by_origin] Origin tag to delete by (e.g. `tree-sitter` to clear the code graph before re-ingest). Also accepted on `link`. |
 
 **Relationship types:**
 
-| Type             | Description                          |
-| ---------------- | ------------------------------------ |
-| `related_to`     | General association                  |
-| `supersedes`     | Entry replaces another               |
-| `depends_on`     | Entry depends on another             |
-| `contradicts`    | Entries have conflicting information |
-| `specializes`    | Entry is a specific case of another  |
-| `part_of`        | Entry is a component of another      |
-| `alternative_to` | Entry is an alternative to another   |
-| `builds_on`      | Entry extends or builds on another   |
+| Type             | Description                                                         |
+| ---------------- | ------------------------------------------------------------------- |
+| `related_to`     | General association                                                 |
+| `supersedes`     | Entry replaces another                                              |
+| `depends_on`     | Entry depends on another                                            |
+| `contradicts`    | Entries have conflicting information                                |
+| `specializes`    | Entry is a specific case of another                                 |
+| `part_of`        | Entry is a component of another                                     |
+| `alternative_to` | Entry is an alternative to another                                  |
+| `builds_on`      | Entry extends or builds on another                                  |
+| `calls`          | Function/method X calls Y (code structure, v1.7+, `code:` node IDs) |
+| `imports`        | Module X imports Y (code structure)                                 |
+| `inherits`       | Class X inherits from Y (code structure)                            |
 
 **Action: link**
 
@@ -493,13 +555,43 @@ knowledge_graph with action "list", entry "projects/backend.md"
 knowledge_graph with action "list", rel_type "depends_on"
 ```
 
+**Action: invalidate**
+
+Set `valid_to` on one or more edges without deleting them. Preserves history for temporal queries.
+
+```
+knowledge_graph with action "invalidate", source "projects/backend.md", target "decisions/use-jwt.md"
+knowledge_graph with action "invalidate", source "projects/backend.md", target "decisions/use-jwt.md", valid_to "2026-03-15"
+```
+
 **Action: traverse**
 
-BFS traversal from a starting entry. Returns a graph of connected entries.
+Directed BFS traversal from a starting entry. Returns a graph of connected entries.
 
 ```
 knowledge_graph with action "traverse", entry "projects/backend.md"
 knowledge_graph with action "traverse", entry "projects/backend.md", depth 3
+knowledge_graph with action "traverse", entry "code:src/auth.ts::login", direction "inbound", rel_type "calls"
+knowledge_graph with action "traverse", entry "projects/backend.md", as_of "2026-01-01"
+```
+
+**Action: bulk_link**
+
+Batch-create edges in a single transaction. Used by `knowledge-ingest` for code graphs (hundreds to thousands of edges per ingest).
+
+```
+knowledge_graph with action "bulk_link", edges [
+  { "source": "code:src/a.ts", "target": "code:src/b.ts", "rel_type": "imports", "origin": "tree-sitter" },
+  ...
+]
+```
+
+**Action: unlink_by_origin**
+
+Delete every edge matching a specific `origin` tag. Used to clear stale code-graph edges before a re-ingest.
+
+```
+knowledge_graph with action "unlink_by_origin", origin "tree-sitter"
 ```
 
 ---
@@ -678,13 +770,28 @@ Knowledge entries are Markdown files with optional YAML frontmatter:
 
 ```markdown
 ---
+title: JWT Authentication
 tags: [auth, security, jwt]
+updated: 2026-04-18
+confidence: extracted
+evergreen: true
 ---
 
 # JWT Authentication
 
 We use JWT with refresh tokens for stateless authentication...
 ```
+
+**Recognised frontmatter fields:**
+
+| Field              | Type          | Meaning                                                                                                                                                                       |
+| ------------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`            | string        | Display title; derived from filename when omitted.                                                                                                                            |
+| `tags`             | string[]      | Inline array form, e.g. `[auth, security]`. Filterable via `knowledge(action="list", tag=…)`.                                                                                 |
+| `updated`          | string (date) | Human-readable last-edited date.                                                                                                                                              |
+| `confidence`       | string        | `extracted` (user-written, 1.0× rank) or `inferred` (auto-distilled / auto-promoted, 0.85× rank).                                                                             |
+| `confidence_score` | number        | Optional 0–1 float carrying a finer-grained model certainty for distilled content.                                                                                            |
+| `evergreen`        | boolean       | **v1.8**: when `true`, the entry skips time-based decay in ranking AND the scored promoter appends to rather than overwrites the entry. Use for durable decisions / identity. |
 
 ### Categories
 

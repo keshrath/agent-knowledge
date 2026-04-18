@@ -44,18 +44,32 @@ describe('dashboard HTTP server', () => {
     expect(data.uptime).toBeGreaterThanOrEqual(0);
   });
 
-  it('GET /api/knowledge returns array', async () => {
+  it('GET /api/knowledge returns KnowledgeEntry-shaped rows', async () => {
     const { status, body } = await fetch('/api/knowledge');
     expect(status).toBe(200);
     const data = JSON.parse(body);
     expect(Array.isArray(data)).toBe(true);
+    // Shape check — if the API handler breaks we should see that in the
+    // row structure, not just the array wrapper.
+    for (const row of data.slice(0, 3)) {
+      expect(typeof row.path).toBe('string');
+      expect(typeof row.title).toBe('string');
+      expect(typeof row.category).toBe('string');
+      expect(Array.isArray(row.tags)).toBe(true);
+    }
   });
 
-  it('GET /api/sessions returns array', async () => {
+  it('GET /api/sessions returns session-listing rows with meta fields', async () => {
     const { status, body } = await fetch('/api/sessions');
     expect(status).toBe(200);
     const data = JSON.parse(body);
     expect(Array.isArray(data)).toBe(true);
+    for (const row of data.slice(0, 3)) {
+      expect(typeof row.sessionId).toBe('string');
+      expect(typeof row.project).toBe('string');
+      // startTime can be 'unknown' but must at least be a string.
+      expect(typeof row.startTime).toBe('string');
+    }
   });
 
   it('GET /api/sessions/search returns array', async () => {

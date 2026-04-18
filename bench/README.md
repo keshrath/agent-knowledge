@@ -1,28 +1,38 @@
 # agent-knowledge bench
 
-Two benchmark suites:
+Four benchmark suites, all invocable via `npm run bench:*`:
 
-1. **`run.ts`** — small smoke benchmark over real `~/agent-knowledge/` content (22 hand-authored fixtures, 5 categories). Use this to check regressions on local content.
-2. **`longmemeval.ts`** — the academic [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark (Wu et al. 2024, ICLR 2025), 500 questions across 6 question types.
+1. **`run.ts`** (`npm run bench`) — smoke benchmark over real `~/agent-knowledge/` content. Reports R@5 / R@10 + **diversity@5** per category.
+2. **`longmemeval.ts`** (`npm run bench:longmemeval`) — the academic [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark (Wu et al. 2024, ICLR 2025), 500 questions across 6 question types. Single-mode runner.
+3. **`longmemeval-matrix.ts`** (`npm run bench:longmemeval:matrix`) — ablation harness that runs 4 sparse modes (`tfidf` / `tfidf+boosts` / `bm25` / `bm25+boosts`) on the same 500-question corpus and prints ONE consolidated comparison table with pp-deltas vs the tfidf baseline. Deterministic, ~35s total. Use this to gate retrieval-layer changes — ship only if R@K doesn't regress on any mode AND the targeted mode improves on its target metric.
+4. **`promote-bench.ts`** (`npm run bench:promote`) — self-labeled write-bench for the scored promoter. Offline replay that auto-labels candidates by "referenced in later sessions", then compares three strategies on the same corpus: `gated` (v1.8 scored promoter), `naive` (ship-all baseline), and `distill` (v1.7 regex distiller, replayed with cursor + `projects/` backup-restore). Reports precision / recall / F1 per strategy. Optional `--ablate` drops one signal at a time to expose which signals are load-bearing. Optional `--write-snapshot` emits a jsonl snapshot of every labelled candidate for human spot-check.
 
 ---
 
 ## 1. Local smoke benchmark — `run.ts`
 
-Tiny R@5 / R@10 benchmark over real `~/agent-knowledge/` content.
+R@5 / R@10 + diversity@5 benchmark over real `~/agent-knowledge/` content.
 
-## Run
+### Run
 
 ```bash
 npm run build
 npm run bench
+npm run bench -- --mmr              # MMR re-ranking on, lambda 0.7
+npm run bench -- --mmr --mmr-lambda=0.5
+npm run bench -- --category-mode=filter   # force the legacy hard-filter
 ```
 
 The runner imports `searchKnowledge` directly from `dist/` — no MCP wrapping,
 no embedding-provider startup time. It prints a per-category recall table
-and lists every miss to stderr so you can iterate.
+(R@5, R@10, Div@5) and lists every miss to stderr so you can iterate.
 
-## Add a fixture
+**Div@5** (v1.8) is the average unique-cluster count in the top-5,
+computed via token-Jaccard connected components at threshold 0.5. Higher is
+better — measures whether the top-5 surfaces distinct content or
+near-duplicates. MMR changes must move this metric, not just recall.
+
+### Add a fixture
 
 Append one JSON line to `bench/fixtures.jsonl`:
 
@@ -34,9 +44,9 @@ Append one JSON line to `bench/fixtures.jsonl`:
 }
 ```
 
-Suggested categories: `factual-lookup`, `multi-hop`, `temporal`, `preference`, `adversarial`.
+Suggested categories: `factual-lookup`, `multi-hop`, `temporal`, `preference`, `adversarial`, `workflow`.
 
-`bench/fixtures.jsonl` is gitignored — author your own fixtures against your own `~/agent-knowledge/` content. A small example file is checked in as `bench/fixtures.example.jsonl`.
+`bench/fixtures.jsonl` is gitignored — author your own fixtures against your own `~/agent-knowledge/` content. A 40-query example file is checked in as `bench/fixtures.example.jsonl`.
 
 ---
 
@@ -147,3 +157,86 @@ python bench/paper_bm25_eval.py ~/.claude/tmp/longmemeval/longmemeval_m.json
 - Embedding cost: ~150 chunks per question × 500 questions ≈ 75 000 embeddings. On a single machine this is ~30 minutes for the full 500.
 - Set `KNOWLEDGE_EMBEDDING_THREADS` to control parallelism (default 1, the local provider uses 1 ONNX thread).
 - Add `--alpha 0.5` to bias hybrid scoring toward TF-IDF (default `0.3`).
+
+---
+
+## 3. Ablation matrix — `longmemeval-matrix.ts`
+
+Runs four sparse modes on the SAME 500-question corpus in sequence (as child
+processes, so each mode gets fresh module state). Prints one consolidated
+table with pp-deltas vs the `tfidf` baseline.
+
+### Run
+
+```bash
+npm run bench:longmemeval:matrix
+npm run bench:longmemeval:matrix -- --limit 100         # smoke
+npm run bench:longmemeval:matrix -- --include-hybrid    # adds the ~70 min hybrid-semantic mode
+```
+
+Default matrix (~35s total):
+
+| Mode           | Description                                              |
+| -------------- | -------------------------------------------------------- |
+| `tfidf`        | Raw TF-IDF, no boosts (paper-style baseline)             |
+| `tfidf+boosts` | TF-IDF with v1.4 proper-noun + temporal-proximity boosts |
+| `bm25`         | Raw BM25                                                 |
+| `bm25+boosts`  | BM25 + v1.4 boosts — the shipped v1.5+ default           |
+
+### Use it as a regression gate
+
+Before a retrieval-layer change, capture the matrix output. After the change,
+re-capture. **A change is shippable iff** R@K does not regress on any mode
+AND the targeted mode actually moves on its target metric. Deterministic —
+rerunning the same matrix yields byte-for-byte the same numbers.
+
+---
+
+## 4. Write bench — `promote-bench.ts`
+
+Self-labeled offline replay of the scored promoter. Safe to re-run — never
+writes to the knowledge base, never advances the promote cursor, and the
+distiller-baseline pass backs up + restores `.knowledge-distill-cursor` and
+every file in `projects/` before running.
+
+### Method
+
+1. Pick a cutoff (default: 14d ago) and a lookahead window (default: 30d).
+2. Score every candidate whose last-seen is on or before the cutoff.
+3. Auto-label each candidate: **useful** iff ≥ 3 of the candidate's
+   distinctive tokens reappear in any session from the same project in the
+   lookahead window.
+4. Compare three strategies head-to-head on the same candidates:
+   - `gated` — v1.8 scored promoter (gates must all pass)
+   - `naive` — ship every candidate
+   - `distill` — v1.7 regex distiller, replayed
+5. Report precision / recall / F1 per strategy.
+
+### Run
+
+```bash
+npm run bench:promote
+npm run bench:promote -- --cutoff-days 30 --lookahead-days 60
+npm run bench:promote -- --ablate                 # drop-one-out per signal
+npm run bench:promote -- --write-snapshot         # dump jsonl for human spot-check
+npm run bench:promote -- --no-distill-baseline    # skip the v1.7 comparison
+```
+
+### What the ablation tells you
+
+With `--ablate`, the promoter re-scores every candidate with ONE signal
+forced to zero, holding gates constant, and re-computes F1. Signals whose
+removal drops F1 the most are load-bearing; signals whose removal raises F1
+are candidates for weight reduction. Don't tune weights by intuition — run
+the ablation first.
+
+### Caveats
+
+- Needs ≥ 2–3 weeks of session history to produce meaningful numbers. On a
+  fresh machine, the bench reports "no pre-cutoff candidates" and exits.
+- The "referenced later" proxy is noisy: false positives when a token
+  accidentally co-occurs, false negatives when the user silently relies on
+  the knowledge without re-surfacing it. Use `--write-snapshot` to sample
+  20 lines by hand and compute Cohen's kappa against the auto-label.
+- No peer-reviewed public benchmark exists for LLM memory write quality —
+  this is honest self-labeled territory.

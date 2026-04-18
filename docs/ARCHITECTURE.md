@@ -41,23 +41,28 @@ graph TB
 src/
   index.ts              Entry point — MCP stdio + dashboard auto-start
   server.ts             6 tool definitions, request routing, error handling
+  tool-handlers.ts      Action dispatch for each MCP tool + the v1.8 `promote` action
   dashboard.ts          HTTP + WebSocket server, REST API, file watcher
   package-meta.ts       Cached name/version from package.json (used by getVersion / MCP / dashboard)
   types.ts              KnowledgeConfig interface, getConfig(), getVersion()
+  wakeup.ts             Token-budgeted L0 identity + L1 top-weighted entry renderer
   knowledge/
-    store.ts            CRUD for markdown entries with YAML frontmatter
-    search.ts           TF-IDF search over knowledge entries
-    git.ts              git pull/push/sync with execSync + timeouts
-    graph.ts            Knowledge graph — edges table, link/unlink/BFS traversal
-    scoring.ts          Confidence/decay scoring — entry_scores table, auto-promotion
+    store.ts            CRUD for markdown entries with YAML frontmatter (incl. `evergreen` flag)
+    search.ts           Hybrid TF-IDF search + optional MMR re-ranking + score_components explain
+    git.ts              git pull/push/sync with execFileSync + timeouts
+    graph.ts            Knowledge graph — edges table, link/unlink/BFS traversal, temporal validity
+    scoring.ts          Confidence/decay scoring — entry_scores table, evergreen-exempt decay
     consolidate.ts      Memory consolidation — TF-IDF duplicate detection, cluster grouping
     reflect.ts          Reflection cycle — surfaces unconnected entries, generates prompts
     analyze.ts          Graph analysis — god nodes, bridges, gaps, knowledge brief (deterministic, no LLM)
+    promote.ts          v1.8 scored + gated promoter — 6-signal weights, 3 gates, grounded rehydration, dreams diary
+    distill.ts          Legacy regex distiller (kept for bench baseline comparison; no longer default-wired)
   sessions/
     parser.ts           Multi-format parsing with mtime cache + adapter dispatch
     search.ts           TF-IDF ranked search with 60s global index cache
     scopes.ts           6 search scopes, post-filters cached index results
     summary.ts          Topic extraction, tool/file detection
+    indexer.ts          Background vector indexer + auto-promotion dispatch
     adapters/
       index.ts          SessionAdapter interface, adapter registry, initAdapters()
       opencode.ts       OpenCode adapter — reads SQLite database (better-sqlite3)
@@ -66,12 +71,32 @@ src/
       aider.ts          Aider adapter — parses markdown chat + JSONL LLM history
   search/
     tfidf.ts            TF-IDF scoring engine (tokenizer, stopwords, index)
+    bm25.ts             BM25 ranking (v1.5+ default; replaced raw TF-IDF in session search)
+    boosts.ts           v1.4 proper-noun + temporal proximity boosts
     fuzzy.ts            Levenshtein distance, sliding window matching
+    excerpt.ts          Query-centered excerpt builder
+    mmr.ts              v1.8 MMR re-ranking, diversity@K metric, cosine + Jaccard sim helpers
     types.ts            SearchResult, SearchOptions interfaces
+  vectorstore/          sqlite-vec wrapper + chunker
+  embeddings/           Pluggable embedding providers (openai / claude / gemini / local)
   ui/
     index.html          Dashboard SPA
-    styles.css           MD3 design tokens (light + dark)
+    styles.css          MD3 design tokens (light + dark)
     app.js              Client-side JS (WebSocket, tabs, rendering)
+
+scripts/
+  hooks/
+    session-start.js         SessionStart — dashboard URL + auto-wakeup injection
+    first-prompt-inject.mjs  UserPromptSubmit — v1.8 query-targeted knowledge inject on the first real prompt
+    precompact-flush.mjs     PreCompact — disk dump + save-unsaved-context nudge
+    precompact-distill.mjs   PreCompact — lightweight user-prompt snapshot
+    sessionend-distill.mjs   SessionEnd — final summary breadcrumb
+
+bench/
+  run.ts                R@5 / R@10 + diversity@5 smoke bench over local ~/agent-knowledge/
+  longmemeval.ts        Single-mode LongMemEval runner (500 Q, 6 question types)
+  longmemeval-matrix.ts v1.8 ablation harness — 4 sparse modes side-by-side on same corpus
+  promote-bench.ts      v1.8 write bench — gated vs naive vs v1.7 regex distiller, self-labeled
 ```
 
 ## Knowledge Module

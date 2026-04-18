@@ -2,10 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { buildExcerpt } from '../src/search/excerpt.js';
 
 describe('buildExcerpt', () => {
-  it('returns excerpt around the first match', () => {
+  it('returns excerpt centred on the first match with context before AND after', () => {
     const text = 'The quick brown fox jumps over the lazy dog';
     const excerpt = buildExcerpt(text, 'fox');
     expect(excerpt).toContain('fox');
+    // Context on both sides is the actual contract — a broken implementation
+    // that returns only the match or only the suffix would pass toContain('fox').
+    expect(excerpt).toMatch(/brown.*fox/i); // preceding word
+    expect(excerpt).toMatch(/fox.*jumps/i); // following word
+    expect(excerpt.length).toBeLessThanOrEqual(text.length);
   });
 
   it('returns first 300 chars when no match found', () => {

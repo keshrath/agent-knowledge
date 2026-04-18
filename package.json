@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.7.3",
+  "version": "1.8.0",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -41,6 +41,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "tsx bench/run.ts",
+    "bench:longmemeval": "tsx bench/longmemeval.ts",
+    "bench:longmemeval:matrix": "tsx bench/longmemeval-matrix.ts",
+    "bench:promote": "tsx bench/promote-bench.ts",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/ tests/",
     "lint:fix": "eslint src/ tests/ --fix",

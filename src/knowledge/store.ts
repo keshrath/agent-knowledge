@@ -27,6 +27,12 @@ export interface KnowledgeEntry {
   content?: string;
   confidence?: string; // 'extracted' | 'inferred'
   confidence_score?: number; // 0.0 - 1.0
+  /**
+   * When true, the entry is exempt from decay in ranking (see scoring.ts)
+   * AND the promoter appends fresh activity instead of overwriting the body.
+   * Use for durable decisions / architecture / identity.
+   */
+  evergreen?: boolean;
 }
 
 /**
@@ -112,6 +118,10 @@ export function listEntries(dir: string, category?: string, tag?: string): Knowl
       const confidence = typeof meta.confidence === 'string' ? meta.confidence : undefined;
       const confidenceScore =
         typeof meta.confidence_score === 'string' ? parseFloat(meta.confidence_score) : undefined;
+      const evergreenRaw = typeof meta.evergreen === 'string' ? meta.evergreen : undefined;
+      const evergreen = evergreenRaw
+        ? evergreenRaw.toLowerCase() === 'true' || evergreenRaw === '1'
+        : undefined;
 
       entries.push({
         path: file,
@@ -123,6 +133,7 @@ export function listEntries(dir: string, category?: string, tag?: string): Knowl
         ...(confidenceScore !== undefined && !isNaN(confidenceScore)
           ? { confidence_score: confidenceScore }
           : {}),
+        ...(evergreen ? { evergreen } : {}),
       });
     } catch (err) {
       console.error('[knowledge] list entry:', err instanceof Error ? err.message : err);
@@ -161,6 +172,10 @@ export function readEntry(
   const confidence = typeof meta.confidence === 'string' ? meta.confidence : undefined;
   const confidenceScore =
     typeof meta.confidence_score === 'string' ? parseFloat(meta.confidence_score) : undefined;
+  const evergreenRaw = typeof meta.evergreen === 'string' ? meta.evergreen : undefined;
+  const evergreen = evergreenRaw
+    ? evergreenRaw.toLowerCase() === 'true' || evergreenRaw === '1'
+    : undefined;
 
   const entry: KnowledgeEntry = {
     path: entryPath,
@@ -173,6 +188,7 @@ export function readEntry(
     ...(confidenceScore !== undefined && !isNaN(confidenceScore)
       ? { confidence_score: confidenceScore }
       : {}),
+    ...(evergreen ? { evergreen } : {}),
   };
 
   return { entry, content };

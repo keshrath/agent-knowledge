@@ -1,7 +1,8 @@
 import { BM25Index } from '../search/bm25.js';
-import { getEntryScoring, computeFinalScore } from './scoring.js';
+import { getEntryScoring, computeFinalScore, decayFactor, maturityMultiplier } from './scoring.js';
 import { buildExcerpt } from '../search/excerpt.js';
 import { listEntries, readEntry, KnowledgeEntry } from './store.js';
+import { rerankMMR, jaccardTokenSim } from '../search/mmr.js';
 
 export interface SearchOptions {
   category?: string;
@@ -9,23 +10,46 @@ export interface SearchOptions {
   caseSensitive?: boolean;
   /**
    * How to use `category`:
-   *  - 'filter' (default, current behavior): only entries in `category` are indexed.
-   *  - 'boost': all entries are indexed; matching-category entries get a score multiplier.
+   *  - 'filter': only entries in `category` are indexed — silently drops
+   *     everything else.
+   *  - 'boost' (DEFAULT): all entries are indexed; matching-category entries
+   *     get a score multiplier. Prevents the "zero results because the
+   *     category guess was wrong" failure mode.
    *
-   * Hard filters silently discard the right evidence when the metadata
-   * doesn't match the answer's location. The boost path keeps the candidate
-   * in the pool while still favoring the matching category.
+   * NOTE: The default flipped from 'filter' to 'boost' in v1.8.0 as part of
+   * the agent-UX pass. Pass 'filter' explicitly for the legacy hard-filter
+   * behavior.
    */
   categoryMode?: 'filter' | 'boost';
+  /** Apply MMR diversification to the result list. Default: false. */
+  mmr?: boolean;
+  /** MMR relevance-vs-diversity tradeoff 0-1. Default: 0.7. */
+  mmrLambda?: number;
+  /** When true, each result carries a `score_components` breakdown. */
+  explain?: boolean;
 }
 
 /** Score multiplier applied to entries whose category matches in 'boost' mode. */
 export const CATEGORY_BOOST_MULTIPLIER = 1.25;
 
+/** Default MMR tradeoff when the caller passes `mmr: true` without `mmrLambda`. */
+export const DEFAULT_MMR_LAMBDA = 0.7;
+
+export interface ScoreComponents {
+  bm25: number;
+  decay: number;
+  maturity: number;
+  confidence: number;
+  category_boost: number;
+  mmr_penalty: number;
+}
+
 export interface SearchResult {
   entry: KnowledgeEntry;
   score: number;
   excerpt: string;
+  /** Populated only when the caller passes `explain: true`. */
+  score_components?: ScoreComponents;
 }
 
 // ── TF-IDF index cache for knowledge entries ──────────────────────────────
@@ -88,23 +112,41 @@ function getOrBuildKnowledgeIndex(
  * Uses a cached TF-IDF index (60s TTL, invalidated on write/delete) to
  * avoid rebuilding the index on every search. Falls back to regex search
  * if TF-IDF returns no results (useful for exact phrase matches).
+ *
+ * Scoring:
+ *   score = bm25 * decay(last_accessed) * maturity(level) * confidence * category_boost
+ *
+ * When `mmr` is true, the TF-IDF top-K is re-ranked with Maximal Marginal
+ * Relevance on token-Jaccard similarity — see search/mmr.ts.
  */
 export function searchKnowledge(
   dir: string,
   query: string,
   options: SearchOptions = {},
 ): Array<SearchResult> {
-  const { category, maxResults = 10, caseSensitive = false, categoryMode = 'filter' } = options;
+  const {
+    category,
+    maxResults = 10,
+    caseSensitive = false,
+    categoryMode = 'boost',
+    mmr = false,
+    mmrLambda = DEFAULT_MMR_LAMBDA,
+    explain = false,
+  } = options;
 
   // In 'boost' mode, build the index over the full corpus (no category restriction).
-  // In 'filter' mode (default), keep current behavior of restricting the index to one category.
+  // In 'filter' mode, keep legacy behavior of restricting the index to one category.
   const indexCategory = categoryMode === 'boost' ? undefined : category;
   const { index, documents } = getOrBuildKnowledgeIndex(dir, indexCategory);
 
   if (documents.length === 0) return [];
 
+  // Fetch a wider candidate pool when MMR is enabled so diversification has
+  // room to operate. Cap at 3× maxResults to avoid pathological long tails.
+  const candidatePool = mmr ? Math.min(maxResults * 3, documents.length) : maxResults;
+
   // Search using TF-IDF
-  const tfidfResults = index.search(query, maxResults);
+  const tfidfResults = index.search(query, candidatePool);
 
   if (tfidfResults.length > 0) {
     const results: SearchResult[] = [];
@@ -125,25 +167,72 @@ export function searchKnowledge(
         | 'proven';
       const lastAccessed = scoreInfo?.last_accessed ?? null;
       const confidence = doc.entry.confidence;
-      let finalScore = computeFinalScore(result.score, lastAccessed, maturity, confidence);
+      const evergreen = doc.entry.evergreen === true;
+      let finalScore = computeFinalScore(
+        result.score,
+        lastAccessed,
+        maturity,
+        confidence,
+        evergreen,
+      );
 
       // Category boost: in 'boost' mode, give matching-category entries an
       // edge instead of dropping non-matching entries.
+      let categoryBoost = 1;
       if (categoryMode === 'boost' && category && doc.entry.category === category) {
-        finalScore *= CATEGORY_BOOST_MULTIPLIER;
+        categoryBoost = CATEGORY_BOOST_MULTIPLIER;
+        finalScore *= categoryBoost;
       }
 
-      results.push({
+      const components: ScoreComponents | undefined = explain
+        ? {
+            bm25: result.score,
+            decay: evergreen ? 1 : lastAccessed ? decayFactor(lastAccessed) : 1,
+            maturity: maturityMultiplier(maturity),
+            confidence: confidence === 'inferred' ? 0.85 : 1,
+            category_boost: categoryBoost,
+            mmr_penalty: 1, // updated below if MMR runs
+          }
+        : undefined;
+
+      const res: SearchResult = {
         entry: doc.entry,
         score: finalScore,
         excerpt: buildExcerpt(doc.content, query, { caseSensitive, contextAfter: 200 }),
-      });
+      };
+      if (components) res.score_components = components;
+      results.push(res);
     }
 
-    // Filter out negative scores and re-sort by final score
+    // Filter out negative scores and sort by final score
     const filtered = results.filter((r) => r.score > 0);
     filtered.sort((a, b) => b.score - a.score);
-    return filtered;
+
+    // Optional MMR re-ranking — diversifies the top-K at a small relevance cost.
+    if (mmr && filtered.length > 1) {
+      const reranked = rerankMMR(filtered, {
+        k: maxResults,
+        lambda: mmrLambda,
+        relevance: (r) => r.score,
+        sim: (a, b) =>
+          jaccardTokenSim(a.entry.content ?? a.excerpt ?? '', b.entry.content ?? b.excerpt ?? ''),
+      });
+      if (explain) {
+        // Track where each item came from for the mmr_penalty component.
+        // Items picked first get penalty=1 (no penalty); later picks get
+        // a smaller value reflecting diversity cost.
+        const originalRank = new Map(filtered.map((r, idx) => [r.entry.path, idx + 1]));
+        reranked.forEach((r, newIdx) => {
+          const orig = originalRank.get(r.entry.path) ?? newIdx + 1;
+          if (r.score_components) {
+            r.score_components.mmr_penalty = newIdx === 0 ? 1 : Math.min(1, orig / (newIdx + 1));
+          }
+        });
+      }
+      return reranked;
+    }
+
+    return filtered.slice(0, maxResults);
   }
 
   // Fallback: regex search for exact phrase matches

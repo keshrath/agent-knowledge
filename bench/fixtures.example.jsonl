@@ -1,5 +1,51 @@
+// Example fixtures for bench/run.ts. Copy to bench/fixtures.jsonl and adjust
+// `expected` paths to match entries that actually exist in your local
+// ~/agent-knowledge/. Categories: factual-lookup, multi-hop, temporal,
+// preference, adversarial. The bench reports R@5/R@10/Div@5 per category.
+//
+// Seed categories with 10-20 queries each for a ~100-query gold set. Queries
+// that mention obvious keywords belong in factual-lookup. Queries that need
+// to combine two facts belong in multi-hop. Queries that depend on "most
+// recent" or "last time" belong in temporal. Queries about a user/team/person
+// preference belong in preference. Queries designed to mislead the retriever
+// (near-duplicate bait, wrong-category hint) belong in adversarial.
 {"query":"how do I set up the database","expected":"workflows/db-setup.md","category":"factual-lookup"}
 {"query":"what's the deployment process","expected":"workflows/deploy.md","category":"multi-hop"}
 {"query":"who owns the auth service","expected":"people/owner.md","category":"preference"}
 {"query":"what did we decide about caching","expected":"decisions/cache-strategy.md","category":"factual-lookup"}
 {"query":"the architecture overview","expected":"projects/main.md","category":"factual-lookup"}
+{"query":"configure the dev server port","expected":"workflows/dev-server.md","category":"factual-lookup"}
+{"query":"how we handle logging in production","expected":"decisions/logging.md","category":"multi-hop"}
+{"query":"what's the backup policy","expected":"workflows/backups.md","category":"factual-lookup"}
+{"query":"ssh into the jump host","expected":"workflows/ssh-access.md","category":"factual-lookup"}
+{"query":"why we chose postgres over mysql","expected":"decisions/database-choice.md","category":"multi-hop"}
+{"query":"lead developer for the mobile app","expected":"people/mobile-lead.md","category":"preference"}
+{"query":"run the smoke tests locally","expected":"workflows/smoke-tests.md","category":"factual-lookup"}
+{"query":"who reviewed the security audit","expected":"people/security-reviewer.md","category":"preference"}
+{"query":"last migration we applied","expected":"decisions/last-migration.md","category":"temporal"}
+{"query":"what changed in the auth module recently","expected":"notes/auth-changes.md","category":"temporal"}
+{"query":"rollback procedure","expected":"workflows/rollback.md","category":"factual-lookup"}
+{"query":"which package manager we use","expected":"decisions/package-manager.md","category":"preference"}
+{"query":"who approves prod deploys","expected":"people/deploy-approver.md","category":"preference"}
+{"query":"the most recent incident postmortem","expected":"notes/incident-2026-03.md","category":"temporal"}
+{"query":"our stance on feature flags","expected":"decisions/feature-flags.md","category":"preference"}
+{"query":"difference between staging and canary envs","expected":"notes/environments.md","category":"multi-hop"}
+{"query":"how to onboard a new contractor","expected":"workflows/contractor-onboarding.md","category":"workflow"}
+{"query":"what's in the CI pipeline","expected":"workflows/ci.md","category":"factual-lookup"}
+{"query":"why we dropped the graphql gateway","expected":"decisions/drop-graphql.md","category":"multi-hop"}
+{"query":"config file for the embeddings provider","expected":"workflows/embeddings-config.md","category":"factual-lookup"}
+{"query":"test a breaking migration safely","expected":"workflows/migration-testing.md","category":"multi-hop"}
+{"query":"architecture diagram link","expected":"projects/architecture-diagram.md","category":"factual-lookup"}
+{"query":"last decision about auth tokens","expected":"decisions/auth-token.md","category":"temporal"}
+{"query":"current on-call rotation","expected":"people/oncall.md","category":"temporal"}
+{"query":"preferred linter config","expected":"decisions/linter.md","category":"preference"}
+{"query":"steps to cut a release","expected":"workflows/release.md","category":"factual-lookup"}
+{"query":"why we split the monorepo","expected":"decisions/monorepo-split.md","category":"multi-hop"}
+{"query":"who knows the payment flow","expected":"people/payments-expert.md","category":"preference"}
+{"query":"most recent cost-cutting change","expected":"notes/cost-cutting-2026.md","category":"temporal"}
+{"query":"migrate customer data between regions","expected":"workflows/region-migration.md","category":"multi-hop"}
+{"query":"what the POS integration touches","expected":"notes/pos-integration-scope.md","category":"multi-hop"}
+{"query":"difference between workflow A and workflow B","expected":"notes/workflow-diff.md","category":"adversarial"}
+{"query":"config file with similar name to another","expected":"workflows/confusable-config.md","category":"adversarial"}
+{"query":"decision that looks like its opposite","expected":"decisions/confusing-decision.md","category":"adversarial"}
+{"query":"person with a common first name","expected":"people/common-name.md","category":"adversarial"}

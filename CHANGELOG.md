@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.8.0 (2026-04-18) — agent-UX pass (**breaking**)
+
+Three-axis change: retrieval grew a diversity knob and explainability, auto-distillation replaced with a scored + gated promoter, and new lifecycle hooks (pre-compaction flush, session-start wakeup, first-prompt knowledge injection). All six existing MCP tools stay visible.
+
+### Breaking changes
+
+- **`knowledge_search` response shape** — now always includes a top-level `mode: "general" | "scoped"` field, plus `{mode, sessions, knowledge}`. Scoped mode (when `scope` is set) returns `knowledge: []` by design — scoped search was always sessions-only, now it says so.
+- **`category_mode` default flipped from `"filter"` to `"boost"`** — passing a `category` hint no longer silently drops non-matching entries. Matching entries get a 1.25× score boost; non-matches stay in the candidate pool. Pass `category_mode: "filter"` for the legacy hard-filter behavior.
+- **Auto-distillation replaced by the scored promoter** — `backgroundIndex` now calls `promote({ mode: "apply" })` instead of `distillSessions()`. Same `autoDistill` config flag governs both, so existing settings carry over; the output gets STRICTER (fewer, higher-signal promotions). The legacy `distillSessions` function is kept for the write-bench but no longer wired into the default pipeline.
+
+### Added
+
+- **`knowledge_search` knobs (all opt-in):**
+  - `mmr: boolean` — re-rank knowledge hits with Maximal Marginal Relevance to kill near-duplicate clusters in the top-K.
+  - `mmr_lambda: number` — 0-1 tradeoff, default 0.7 (1.0 = pure relevance, 0.0 = pure diversity).
+  - `explain: boolean` — attach `score_components` to each knowledge hit (`bm25, decay, maturity, confidence, category_boost, mmr_penalty`). Lets the agent reason about why X ranked above Y.
+- **6-signal scored promoter** (`src/knowledge/promote.ts`) — every project-level candidate is scored on `{relevance 0.30, frequency 0.24, queryDiversity 0.15, recency 0.15, consolidation 0.10, conceptualRichness 0.06}`. Three independent gates (`minScore ≥ 0.5`, `minRecallCount ≥ 2`, `minUniqueQueries ≥ 2`) must ALL pass before a candidate is promoted.
+- **`knowledge_admin(action: "promote")`** — invoke the promoter on demand. `promote_mode: "explain"` (default) returns score breakdowns without writing; `promote_mode: "apply"` writes the ones that pass. Overridable gates via `min_score`, `min_recall_count`, `min_unique_queries`.
+- **Grounded rehydration** — promotion checks that the source session file still exists on disk before writing. Prevents promoting content the user has since deleted.
+- **`.dreams/YYYY-MM-DD.md` diary** — every promoter run logs per-candidate signal breakdowns, gate outcomes, and final action into `~/agent-knowledge/.dreams/`. The dir is git-tracked (audit trail) but `.`-prefixed so `listEntries`/search skip it.
+- **`evergreen: true` frontmatter flag** — entries with the flag are exempt from decay in ranking, AND the promoter appends new activity instead of overwriting the body. Use for durable decisions / architecture / identity entries.
+- **`diversity@5` bench metric** — `bench/run.ts` now reports average unique-cluster count in top-5 (token-Jaccard ≥ 0.5 merges) alongside R@5 / R@10. MMR changes must move this metric, not just recall.
+- **`bench/promote-bench.ts`** — self-labeled write-bench. Offline replay of the promoter vs. a naive "ship all candidates" baseline, with auto-labeling by "was the candidate referenced in sessions ≥ cutoff days later?". Outputs precision / recall / F1 per strategy. Side-effect-free (never writes to the KB, never advances the cursor). Intended gate for rolling signal weights or threshold changes.
+- **Pre-compaction memory-flush nudge** — `scripts/hooks/precompact-flush.mjs` now injects an `additionalContext` block into the host's PreCompact response telling the agent to save any unsaved context via `knowledge(action="write", …)` BEFORE compaction summarizes the transcript. Disable with `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=0` (keeps the disk dump). Set `=off` to suppress both.
+- **SessionStart auto-wakeup** — `scripts/hooks/session-start.js` auto-loads a token-budgeted `knowledge(action="wakeup")` payload into the host's SessionStart `additionalContext` on every session. No more manual wakeup call. Disable with `AGENT_KNOWLEDGE_AUTOWAKE=0`, tune budget with `AGENT_KNOWLEDGE_WAKEUP_BUDGET` (default 800 tokens).
+- **First-prompt knowledge injection** — `scripts/hooks/first-prompt-inject.mjs` (UserPromptSubmit). When the user sends the first real prompt of a session, it's passed through `searchKnowledge(prompt, { mmr: true })` and the top hits are injected as `additionalContext` before the model reads the prompt. Gates: prompt ≥ 10 chars, doesn't start with `/` or `!`, fires at most once per session (marker file at `{dataDir}/.first-prompt-seen/<session_id>`). Fail-open everywhere. Complements `wakeup` (which is query-agnostic) with query-targeted content. Env knobs:
+  - `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT` (default `1`) — set `0` / `false` / `off` to disable.
+  - `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET` (default `600`, tokens) — clamped to [100, 8000].
+  - `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` (default `4`) — clamped to [1, 20].
+- **`src/search/mmr.ts`** — new module: `rerankMMR`, `diversityAtK`, `cosineSim`, `jaccardTokenSim`. Reusable for any ranked list.
+- **Extended `bench/fixtures.example.jsonl`** from 5 to 40 sample queries across factual-lookup / multi-hop / temporal / preference / adversarial / workflow categories. Still check-in-safe placeholders — copy to `fixtures.jsonl` and adjust `expected` paths to match your real KB.
+- **Tests:** 45 new (21 for MMR + diversity utils, 16 for promoter signals + gates, 8 for first-prompt-inject hook). 541/541 tests passing.
+
+### Changed
+
+- **`computeFinalScore` now accepts an `evergreen` argument** — when true, skips the decay factor. Backward-compatible (parameter is optional).
+- **Signal weights + gate thresholds are exported constants** (`SIGNAL_WEIGHTS`, `DEFAULT_GATES`) — bench + tests pin against them, so changes surface in the diff review.
+- **`searchKnowledge` widens the candidate pool** to 3× `maxResults` when `mmr` is enabled, so MMR has room to pick diverse items.
+
+### Measurement
+
+LongMemEval baseline numbers are unchanged (the P0/P1 work is agent-UX + optional retrieval knobs — the default retrieval path is untouched): **R@5 = 97.2% sparse / 98.8% hybrid on `_s`**, **86.0% sparse / 88.4% hybrid on `_m`**. MMR and category-boost changes should be gated on `bench/run.ts` diversity@5 + `bench/promote-bench.ts` F1 before rolling defaults.
+
 ## 1.7.0 (2026-04-13)
 
 ### Added

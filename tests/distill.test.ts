@@ -211,7 +211,12 @@ describe('distillSessions', () => {
     const cursorPath = path.join(dataDir, '.knowledge-distill-cursor');
     expect(fs.existsSync(cursorPath)).toBe(true);
     const cursor = fs.readFileSync(cursorPath, 'utf-8').trim();
-    expect(cursor.length).toBeGreaterThan(0);
+    // Content contract — must be a parseable ISO timestamp, not a placeholder
+    // or empty marker. Otherwise the second run's "don't reprocess" check is
+    // relying on an accidental truthy string.
+    const parsed = new Date(cursor).getTime();
+    expect(Number.isFinite(parsed)).toBe(true);
+    expect(parsed).toBeGreaterThan(0);
 
     const result2 = await distillSessions();
     expect(result2.updated).toHaveLength(0);

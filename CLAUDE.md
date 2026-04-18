@@ -98,7 +98,13 @@ npm run dev        # watch mode (tsc --watch)
 
 ## Key APIs
 
-- **MCP** (6 tools): `knowledge` (actions: list/read/write/delete/sync), `knowledge_search` (general + scoped recall via `scope` param), `knowledge_session` (actions: list/get/summary), `knowledge_graph` (actions: link/unlink/invalidate/list/traverse/bulk_link/unlink_by_origin), `knowledge_analyze` (actions: consolidate/reflect/god_nodes/bridges/gaps/brief), `knowledge_admin` (actions: status/config/rebuild_embeddings)
+- **MCP (6 tools, all exposed to the LLM):**
+  - `knowledge` — actions `list`, `read`, `write`, `delete`, `sync`, `wakeup`.
+  - `knowledge_search` — hybrid general OR scoped (via `scope`); response shape `{mode, sessions, knowledge}`. v1.8 knobs: `mmr`, `mmr_lambda`, `category_mode` (default `boost`), `explain`.
+  - `knowledge_session` — `list`, `get`, `summary`.
+  - `knowledge_graph` — `link`, `unlink`, `invalidate`, `list`, `traverse`, `bulk_link`, `unlink_by_origin`.
+  - `knowledge_analyze` — `consolidate`, `reflect`, `god_nodes`, `bridges`, `gaps`, `brief`.
+  - `knowledge_admin` — `status`, `config`, `rebuild_embeddings`, `prune_orphans`, `vacuum`, `promote` (6-signal scored promoter).
 - **Dashboard**: HTTP + WebSocket at port 3423, REST API for entries/sessions/search, `POST /api/knowledge` for HTTP-based writes (used by agent-tasks KnowledgeBridge)
 - **Git sync**: Auto pull/push on write, manual sync via `knowledge(action: 'sync')`
 
@@ -122,9 +128,11 @@ Additional roots: `EXTRA_SESSION_ROOTS` env var (comma-separated). New tools: im
 - Confidence/decay scoring: search ranking weighted by access frequency and recency (candidate->established->proven)
 - Auto-linking: `knowledge` with `action: "write"` auto-creates `related_to` edges for top-3 similar entries (cosine > 0.7)
 - Confidence tagging: entries have optional `confidence: extracted|inferred` frontmatter; inferred entries get 0.85× search ranking
-- Edge origin: graph edges track `origin` (manual/auto-link/distill/reflect) for provenance
+- Evergreen tagging (v1.8): entries with `evergreen: true` frontmatter skip decay in ranking AND are append-only under promotion
+- Edge origin: graph edges track `origin` (manual/auto-link/distill/reflect/promote) for provenance
 - Analysis: `knowledge_analyze` actions for god_nodes, bridges, gaps, brief
 - Pre-extraction: session distillation extracts commits/errors/urls/packages via regex
+- Auto-promotion (v1.8): `src/knowledge/promote.ts` replaces the regex distiller. 6-signal scored candidates, 3 gates (all must pass), `.dreams/YYYY-MM-DD.md` audit diary, grounded rehydration (skip if source session missing)
 
 ## Commit Messages
 

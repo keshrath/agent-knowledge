@@ -54,15 +54,20 @@ export function maturityMultiplier(maturity: Maturity): number {
 }
 
 /**
- * Compute final score: baseRelevance * decayFactor * maturityMultiplier
+ * Compute final score: baseRelevance * decayFactor * maturityMultiplier * confidence
+ *
+ * Evergreen entries (frontmatter `evergreen: true`) skip the decay factor.
+ * Decisions, architecture, and identity entries should carry the flag so
+ * their ranking isn't punished by calendar time.
  */
 export function computeFinalScore(
   baseRelevance: number,
   lastAccessed: string | null,
   maturity: Maturity,
   confidence?: string,
+  evergreen?: boolean,
 ): number {
-  const decay = lastAccessed ? decayFactor(lastAccessed) : 1;
+  const decay = evergreen ? 1 : lastAccessed ? decayFactor(lastAccessed) : 1;
   const multiplier = maturityMultiplier(maturity);
   const confidenceFactor = confidence === 'inferred' ? 0.85 : 1.0;
   return baseRelevance * decay * multiplier * confidenceFactor;

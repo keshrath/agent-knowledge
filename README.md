@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
-[![Tests: 420 passing](https://img.shields.io/badge/Tests-420%20passing-brightgreen.svg)]()
+[![Tests: 534 passing](https://img.shields.io/badge/Tests-534%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
 [![LongMemEval R@5: 98.8%](https://img.shields.io/badge/LongMemEval%20R%405-98.8%25-brightgreen.svg)]()
 
@@ -50,12 +50,12 @@ No configuration needed. Additional session roots can be added via the `EXTRA_SE
 - **Multi-tool session search** -- unified search across Claude Code, Cursor, OpenCode, Cline, Continue.dev, and Aider sessions
 - **Hybrid search** -- semantic vector similarity blended with TF-IDF keyword ranking
 - **Git-synced knowledge base** -- markdown vault with YAML frontmatter, auto commit and push on writes
-- **Auto-distillation** -- session insights automatically extracted and pushed to git with secrets scrubbing
+- **Scored + gated promoter (v1.8)** -- session insights promoted via a 6-signal weighted scorer with three independent gates (`minScore`, `minRecallCount`, `minUniqueQueries`). Runs automatically in background, on demand via `knowledge_admin(action: "promote")`, or benchable offline via `npm run bench:promote`. Emits an auditable `.dreams/YYYY-MM-DD.md` diary every run. Replaces the regex-only distiller.
 - **Pluggable adapter system** -- add support for new tools by implementing the `SessionAdapter` interface
 - **Embeddings** -- local (Hugging Face), OpenAI, Claude/Voyage, or Gemini providers
 - **Fuzzy matching** -- typo-tolerant search using Levenshtein distance
 - **6 search scopes** -- errors, plans, configs, tools, files, decisions
-- **6 MCP tools** -- consolidated action-based interface (knowledge, knowledge_search, knowledge_session, knowledge_graph, knowledge_analyze, knowledge_admin)
+- **6 MCP tools** -- consolidated action-based interface (`knowledge`, `knowledge_search`, `knowledge_session`, `knowledge_graph`, `knowledge_analyze`, `knowledge_admin`)
 - **Wakeup context (L0+L1)** -- `knowledge` action `wakeup` returns a token-budgeted identity + top-weight entries blob for session-start hydration
 - **Code graph resolution** -- `calls`, `imports`, `inherits` edge types for code structure; directed BFS traversal (`outbound`/`inbound`/`both`); `bulk_link` for efficient ingestion; `unlink_by_origin` for clearing stale code edges before re-ingest; `code:` prefixed node IDs distinguish code from knowledge
 - **Temporal knowledge graph** -- edges support `valid_from` / `valid_to` validity windows; `as_of` queries return point-in-time snapshots; `invalidate` action marks facts as ended without deleting them
@@ -134,22 +134,31 @@ node dist/server.js --port 3423
 
 ### Knowledge Base
 
-| Tool        | Action   | Description                         | Parameters                                       |
-| ----------- | -------- | ----------------------------------- | ------------------------------------------------ |
-| `knowledge` | `list`   | List entries by category and/or tag | `category?`, `tag?`                              |
-|             | `read`   | Read a specific entry               | `path` (required)                                |
-|             | `write`  | Create/update entry (auto git sync) | `category`, `filename`, `content` (all required) |
-|             | `delete` | Delete an entry (auto git sync)     | `path` (required)                                |
-|             | `sync`   | Manual git pull + push              | --                                               |
+| Tool        | Action   | Description                                                   | Parameters                                       |
+| ----------- | -------- | ------------------------------------------------------------- | ------------------------------------------------ |
+| `knowledge` | `list`   | List entries by category and/or tag                           | `category?`, `tag?`                              |
+|             | `read`   | Read a specific entry                                         | `path` (required)                                |
+|             | `write`  | Create/update entry (auto git sync)                           | `category`, `filename`, `content` (all required) |
+|             | `delete` | Delete an entry (auto git sync)                               | `path` (required)                                |
+|             | `sync`   | Manual git pull + push                                        | --                                               |
+|             | `wakeup` | Return L0 identity + L1 top-weighted entries (token-budgeted) | `token_budget?`, `category?`                     |
 
 ### Search
 
-| Tool               | Description                                     | Parameters                                              |
-| ------------------ | ----------------------------------------------- | ------------------------------------------------------- |
-| `knowledge_search` | Hybrid semantic + TF-IDF search across sessions | `query`, `project?`, `role?`, `max_results?`, `ranked?` |
-|                    | Scoped recall (when `scope` is provided)        | `query`, `scope`, `project?`, `max_results?`            |
+| Tool               | Description                                   | Parameters                                                                                                                             |
+| ------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge_search` | General hybrid TF-IDF + semantic (no `scope`) | `query`, `project?`, `role?`, `max_results?`, `ranked?`, `semantic?`, `category?`, `category_mode?`, `mmr?`, `mmr_lambda?`, `explain?` |
+|                    | Scoped session-only recall (when `scope` set) | `query`, `scope`, `project?`, `max_results?`                                                                                           |
+
+Response shape: `{mode: "general" | "scoped", sessions, knowledge}`. Scoped mode returns `knowledge: []` by design.
 
 Scopes: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`.
+
+v1.8 search knobs:
+
+- `mmr: true` applies Maximal Marginal Relevance re-ranking (kills near-duplicate clusters in top-K). `mmr_lambda` 0-1, default 0.7.
+- `category_mode: "boost"` (default) gives matching-category entries a 1.25× score multiplier instead of dropping non-matches. Pass `"filter"` for legacy hard-filter behavior.
+- `explain: true` attaches `score_components: {bm25, decay, maturity, confidence, category_boost, mmr_penalty}` to every knowledge hit.
 
 ### Sessions
 
@@ -189,10 +198,26 @@ Scopes: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`.
 
 ### Admin
 
-| Tool              | Action   | Description                  | Parameters                                 |
-| ----------------- | -------- | ---------------------------- | ------------------------------------------ |
-| `knowledge_admin` | `status` | Vector store statistics      | --                                         |
-|                   | `config` | View or update configuration | `git_url?`, `memory_dir?`, `auto_distill?` |
+| Tool              | Action               | Description                                                | Parameters                                                                                     |
+| ----------------- | -------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `knowledge_admin` | `status`             | Vector store statistics                                    | --                                                                                             |
+|                   | `config`             | View or update configuration                               | `git_url?`, `memory_dir?`, `auto_distill?`                                                     |
+|                   | `rebuild_embeddings` | Re-embed all knowledge entries (useful on provider switch) | --                                                                                             |
+|                   | `prune_orphans`      | Delete embeddings for sessions no longer on disk           | `vacuum?`, `force_vacuum?`                                                                     |
+|                   | `vacuum`             | Reclaim free pages in the vector store                     | --                                                                                             |
+|                   | `promote`            | Scored + gated promoter (v1.8)                             | `promote_mode?` (`apply`\|`explain`), `min_score?`, `min_recall_count?`, `min_unique_queries?` |
+
+### Scored promoter (v1.8)
+
+Session insights no longer drop into the knowledge base via regex distillation. Instead, every project-level candidate is scored on six signals (relevance 0.30, frequency 0.24, query-diversity 0.15, recency 0.15, consolidation 0.10, conceptual-richness 0.06) and gated on `minScore ≥ 0.5`, `minRecallCount ≥ 2`, `minUniqueQueries ≥ 2`. All three gates must pass. Background auto-promotion is controlled by the same `auto_distill` config flag; invoke on demand with `knowledge_admin(action: "promote")`.
+
+- `promote_mode: "explain"` (default) — score + gate candidates, write diary, DO NOT touch the KB.
+- `promote_mode: "apply"` — promote candidates that pass, write diary, git-commit.
+- Every run drops `~/agent-knowledge/.dreams/YYYY-MM-DD.md` with per-candidate signal breakdowns and gate outcomes. The `.`-prefixed dir is git-tracked but excluded from list/search.
+- Grounded rehydration: a candidate is skipped if its source session file no longer exists on disk (prevents promoting deleted content).
+- Entries with `evergreen: true` frontmatter are never overwritten by promotion — activity is appended.
+
+Write-bench harness: `npm run bench:promote` — offline replay with auto-labeling by "referenced in later sessions". Compares gated promoter to a naive "ship all" baseline, reports precision / recall / F1. Use it to gate signal-weight or threshold changes before rolling them out.
 
 ## REST API
 

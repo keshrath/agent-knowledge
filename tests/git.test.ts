@@ -31,12 +31,16 @@ describe('gitPull', () => {
     cleanup(tmpDir);
   });
 
-  it('succeeds on a repo with no remote (graceful failure)', async () => {
+  it('surfaces a remote-related error message when pulling with no remote configured', async () => {
     const result = await gitPull(tmpDir);
-    // No remote configured, so pull should fail gracefully
     expect(result.success).toBe(false);
-    expect(result.message).toEqual(expect.any(String));
-    expect(result.message.length).toBeGreaterThan(0);
+    // A truthy-string assertion would pass for "oops" or "". Pin the error
+    // shape: git's message for missing-remote mentions "remote" or similar.
+    // Accept any of the recognised failure-mode phrases across git versions.
+    expect(result.message).toMatch(
+      /remote|no such|not a git|fatal|unable to|ref(s|spec|erence)|origin|unknown/i,
+    );
+    expect(result.message.length).toBeGreaterThan(5);
   });
 });
 

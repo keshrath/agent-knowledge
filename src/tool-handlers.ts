@@ -24,6 +24,7 @@ import { searchSessions } from './sessions/search.js';
 import { searchKnowledge, invalidateKnowledgeIndexCache } from './knowledge/search.js';
 import { listSessions, getSessionSummary } from './sessions/summary.js';
 import { wakeup } from './wakeup.js';
+import { promote } from './knowledge/promote.js';
 import { scopedSearch, type SearchScope } from './sessions/scopes.js';
 import { VectorStore } from './vectorstore/index.js';
 import {
@@ -306,9 +307,16 @@ export function handleKnowledgeSession(
 }
 
 /**
- * Unified search handler — merges knowledge_search and knowledge_recall.
- * When `scope` is provided, behaves as scoped recall.
- * Otherwise, performs general hybrid search.
+ * Unified search handler.
+ *
+ * Response shape always carries `mode` so the caller can tell which code
+ * path ran:
+ *   - `mode: "scoped"`  → sessions-only filtered recall (triggered by `scope`).
+ *                         The `knowledge` array is empty — scoped mode does
+ *                         not surface knowledge-base entries.
+ *   - `mode: "general"` → hybrid TF-IDF + semantic across both sessions and
+ *                         knowledge entries, with optional MMR + category
+ *                         boost on the knowledge leg.
  */
 export async function handleKnowledgeSearch(args: Record<string, unknown>): Promise<ToolResult> {
   const a = validateArgs(args);
@@ -317,16 +325,18 @@ export async function handleKnowledgeSearch(args: Record<string, unknown>): Prom
   const maxResults = optionalNumber(a, 'max_results', 1, 500) ?? 20;
   const semantic = optionalBoolean(a, 'semantic') ?? true;
 
-  // If scope is provided, delegate to scoped search (recall behavior)
+  // If scope is provided, delegate to scoped search (recall behavior).
+  // Scoped mode is sessions-only by design — the `knowledge` array is empty
+  // and the response `mode` is "scoped" so callers can branch.
   const scope = optionalString(a, 'scope');
   if (scope !== undefined) {
     validateEnum(scope, SCOPES, 'scope');
-    const results = await scopedSearch(scope as SearchScope, query, {
+    const sessions = await scopedSearch(scope as SearchScope, query, {
       project,
       maxResults,
       semantic,
     });
-    return ok(results);
+    return ok({ mode: 'scoped', scope, sessions, knowledge: [] });
   }
 
   // General search — sessions + knowledge entries
@@ -348,21 +358,34 @@ export async function handleKnowledgeSearch(args: Record<string, unknown>): Prom
     ['filter', 'boost'] as const,
     'category_mode',
   );
+  const mmr = optionalBoolean(a, 'mmr') ?? false;
+  const mmrLambda = optionalNumber(a, 'mmr_lambda', 0, 1);
+  const explain = optionalBoolean(a, 'explain') ?? false;
   const knowledgeResults = searchKnowledge(config.memoryDir, query, {
     maxResults: 10,
     category,
     categoryMode,
-  }).map((r) => ({
-    source: 'knowledge' as const,
-    id: r.entry.path,
-    path: r.entry.path,
-    category: r.entry.category,
-    title: r.entry.title || r.entry.path,
-    excerpt: r.excerpt,
-    score: r.score,
-  }));
+    mmr,
+    mmrLambda,
+    explain,
+  }).map((r) => {
+    const base = {
+      source: 'knowledge' as const,
+      id: r.entry.path,
+      path: r.entry.path,
+      category: r.entry.category,
+      title: r.entry.title || r.entry.path,
+      excerpt: r.excerpt,
+      score: r.score,
+    };
+    return explain && r.score_components ? { ...base, score_components: r.score_components } : base;
+  });
 
-  return ok({ sessions: sessionResults, knowledge: knowledgeResults });
+  return ok({
+    mode: 'general',
+    sessions: sessionResults,
+    knowledge: knowledgeResults,
+  });
 }
 
 export async function handleKnowledgeAdmin(args: Record<string, unknown>): Promise<ToolResult> {
@@ -498,9 +521,30 @@ export async function handleKnowledgeAdmin(args: Record<string, unknown>): Promi
         ...result,
       });
     }
+    case 'promote': {
+      // Scored + gated promotion pass.
+      // Default mode is "explain" (read-only score breakdown). Pass mode=apply
+      // to actually write promoted candidates into projects/.
+      const promoteMode =
+        validateEnum(
+          optionalString(a, 'promote_mode'),
+          ['apply', 'explain'] as const,
+          'promote_mode',
+        ) ?? 'explain';
+      const minScore = optionalNumber(a, 'min_score', 0, 1);
+      const minRecallCount = optionalNumber(a, 'min_recall_count', 0, 100);
+      const minUniqueQueries = optionalNumber(a, 'min_unique_queries', 0, 100);
+      const result = await promote({
+        mode: promoteMode,
+        minScore,
+        minRecallCount,
+        minUniqueQueries,
+      });
+      return ok(result);
+    }
     default:
       return err(
-        `Unknown action: ${action}. Valid actions: status, config, rebuild_embeddings, prune_orphans, vacuum`,
+        `Unknown action: ${action}. Valid actions: status, config, rebuild_embeddings, prune_orphans, vacuum, promote`,
       );
   }
 }

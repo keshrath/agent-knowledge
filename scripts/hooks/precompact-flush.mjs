@@ -1,34 +1,27 @@
 #!/usr/bin/env node
 
 // =============================================================================
-// agent-knowledge PreCompact / Stop hook
+// agent-knowledge PreCompact / Stop hook — memory-flush
 //
-// Flushes a session summary to ~/agent-knowledge/sessions/ before the host
-// (Claude Code, Cursor, Codex CLI, etc.) compacts or ends the conversation,
-// so the verbatim distillation has something to anchor against later.
+// Two jobs, both best-effort:
 //
-// Fail-open: any error
-// is logged to stderr and the hook still prints `{}` so it never blocks the host.
+//   1. Dump the session summary to ~/agent-knowledge/sessions/<project>/ so
+//      later distillation/promotion has a durable anchor even if the host
+//      garbage-collects the transcript.
 //
-// Wire-up (host-specific — examples):
+//   2. Inject a short "save-your-context" nudge into the host's PreCompact
+//      response (`hookSpecificOutput.additionalContext`). The compaction pass
+//      is about to summarize — anything important and unsaved should be
+//      written to the knowledge base NOW via `knowledge(action="write", …)`.
+//      Pre-compaction memory-flush primitive.
 //
-//   Claude Code (~/.claude/settings.json):
-//     {
-//       "hooks": {
-//         "PreCompact": [{"matcher": "", "hooks": [
-//           {"type": "command",
-//            "command": "node \"$HOME/.claude/mcp-servers/agent-knowledge/scripts/hooks/precompact-flush.mjs\"",
-//            "timeout": 10}
-//         ]}],
-//         "Stop": [{"matcher": "", "hooks": [
-//           {"type": "command",
-//            "command": "node \"$HOME/.claude/mcp-servers/agent-knowledge/scripts/hooks/precompact-flush.mjs\"",
-//            "timeout": 10}
-//         ]}]
-//       }
-//     }
+// Disable the nudge by exporting AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=0 (the disk
+// dump still runs). Set AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=off to suppress both.
 //
-// Reads hook JSON from stdin (the host pipes it). The fields we look at:
+// Fail-open: every error path prints a valid JSON response so the host never
+// blocks on this hook.
+//
+// Reads hook JSON from stdin (the host pipes it). Fields used:
 //   { session_id, hook_event_name, cwd? }
 // =============================================================================
 
@@ -40,15 +33,39 @@ import { homedir } from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-function fail(msg) {
-  process.stderr.write(`[precompact-flush] ${msg}\n`);
-  process.stdout.write('{}\n');
+const NUDGE_MODE = (process.env.AGENT_KNOWLEDGE_PRECOMPACT_NUDGE ?? '1').trim().toLowerCase();
+const nudgeEnabled = NUDGE_MODE !== '0' && NUDGE_MODE !== 'false' && NUDGE_MODE !== 'off';
+const diskDumpEnabled = NUDGE_MODE !== 'off';
+
+const NUDGE_TEXT = [
+  '## PreCompact — memory-flush nudge',
+  '',
+  'The host is about to compact the conversation. Anything you learned this',
+  'turn that the next session will need MUST be written to the knowledge base',
+  'before the summary replaces the transcript. Use:',
+  '',
+  '  `knowledge(action="write", category="decisions"|"notes"|"workflows", filename=..., content=...)`',
+  '',
+  'Candidates worth a write: architectural decisions, non-obvious gotchas,',
+  'hard-won commands, people/ownership facts, project state. Skip transient',
+  'things (file diffs, TODO lists, in-flight plans — plan/task systems own those).',
+].join('\n');
+
+function emitResult(additionalContext) {
+  const payload = additionalContext
+    ? {
+        hookSpecificOutput: {
+          hookEventName: 'PreCompact',
+          additionalContext,
+        },
+      }
+    : {};
+  process.stdout.write(JSON.stringify(payload) + '\n');
   process.exit(0);
 }
 
-function ok() {
-  process.stdout.write('{}\n');
-  process.exit(0);
+function warn(msg) {
+  process.stderr.write(`[precompact-flush] ${msg}\n`);
 }
 
 async function readStdin() {
@@ -58,7 +75,6 @@ async function readStdin() {
     process.stdin.setEncoding('utf-8');
     process.stdin.on('data', (chunk) => (data += chunk));
     process.stdin.on('end', () => resolveP(data));
-    // Don't hang forever if the host doesn't pipe anything
     setTimeout(() => resolveP(data), 2000);
   });
 }
@@ -75,27 +91,11 @@ function memoryDir() {
   return process.env.KNOWLEDGE_MEMORY_DIR || join(homedir(), 'agent-knowledge');
 }
 
-async function main() {
-  const raw = await readStdin();
-  let payload = {};
-  if (raw) {
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      // Ignore — host may not have piped JSON
-    }
-  }
-
-  const sessionId = payload.session_id || process.env.CLAUDE_SESSION_ID || 'unknown';
-  const event = payload.hook_event_name || 'precompact';
-  const cwd = payload.cwd || process.cwd();
-  const projectSlug = slugify(cwd.split(/[\\/]/).filter(Boolean).pop() || 'project');
-
-  // Try to import the agent-knowledge summary helper directly (ESM dynamic import).
-  // The compiled output lives next to this script: ../../dist/sessions/summary.js
+async function dumpSummaryToDisk({ sessionId, event, cwd, projectSlug }) {
   const distSummary = resolve(__dirname, '..', '..', 'dist', 'sessions', 'summary.js');
   if (!existsSync(distSummary)) {
-    return fail(`dist not built: ${distSummary} (run \`npm run build\`)`);
+    warn(`dist not built: ${distSummary} (run \`npm run build\`)`);
+    return;
   }
 
   let summaryFn;
@@ -103,27 +103,32 @@ async function main() {
     const mod = await import(`file://${distSummary.replace(/\\/g, '/')}`);
     summaryFn = mod.getSessionSummary;
   } catch (err) {
-    return fail(`import failed: ${err?.message || err}`);
+    warn(`import failed: ${err?.message || err}`);
+    return;
   }
   if (typeof summaryFn !== 'function') {
-    return fail('getSessionSummary not exported from dist/sessions/summary.js');
+    warn('getSessionSummary not exported from dist/sessions/summary.js');
+    return;
   }
 
   let summary;
   try {
     summary = summaryFn(sessionId);
   } catch (err) {
-    return fail(`getSessionSummary threw: ${err?.message || err}`);
+    warn(`getSessionSummary threw: ${err?.message || err}`);
+    return;
   }
   if (!summary) {
-    return fail(`session ${sessionId} not found — nothing to flush`);
+    warn(`session ${sessionId} not found — nothing to flush`);
+    return;
   }
 
   const outDir = join(memoryDir(), 'sessions', projectSlug);
   try {
     mkdirSync(outDir, { recursive: true });
   } catch (err) {
-    return fail(`mkdir ${outDir}: ${err?.message || err}`);
+    warn(`mkdir ${outDir}: ${err?.message || err}`);
+    return;
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -147,13 +152,13 @@ async function main() {
 
   try {
     writeFileSync(outPath, body, 'utf-8');
+    warn(`wrote ${outPath}`);
   } catch (err) {
-    return fail(`write ${outPath}: ${err?.message || err}`);
+    warn(`write ${outPath}: ${err?.message || err}`);
+    return;
   }
 
-  process.stderr.write(`[precompact-flush] wrote ${outPath}\n`);
-
-  // Best-effort: append a one-line breadcrumb readable later by `knowledge` action=list
+  // Best-effort: append a breadcrumb readable later by `knowledge` action=list
   try {
     const breadcrumb = join(memoryDir(), 'sessions', 'index.md');
     const existing = existsSync(breadcrumb)
@@ -167,8 +172,32 @@ async function main() {
   } catch {
     /* ignore */
   }
-
-  ok();
 }
 
-main().catch((err) => fail(err?.message || String(err)));
+async function main() {
+  const raw = await readStdin();
+  let payload = {};
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      /* ignore — host may not pipe JSON */
+    }
+  }
+
+  const sessionId = payload.session_id || process.env.CLAUDE_SESSION_ID || 'unknown';
+  const event = payload.hook_event_name || 'precompact';
+  const cwd = payload.cwd || process.cwd();
+  const projectSlug = slugify(cwd.split(/[\\/]/).filter(Boolean).pop() || 'project');
+
+  if (diskDumpEnabled) {
+    await dumpSummaryToDisk({ sessionId, event, cwd, projectSlug });
+  }
+
+  emitResult(nudgeEnabled ? NUDGE_TEXT : undefined);
+}
+
+main().catch((err) => {
+  warn(err?.message || String(err));
+  emitResult(nudgeEnabled ? NUDGE_TEXT : undefined);
+});

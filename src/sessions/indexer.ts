@@ -11,7 +11,7 @@ import {
   getSessionMeta,
 } from './parser.js';
 import { getConfig } from '../types.js';
-import { distillSessions } from '../knowledge/distill.js';
+import { promote } from '../knowledge/promote.js';
 
 let _vectorStore: VectorStore | null = null;
 
@@ -208,22 +208,25 @@ export async function backgroundIndex(): Promise<void> {
 
   console.error('[knowledge] Background indexing complete');
 
-  // ── Auto-distill session insights into knowledge base ───────────────────
+  // ── Auto-promote session insights into knowledge base ───────────────────
+  // v1.8.0: the regex-only distiller is replaced by the scored/gated promoter
+  // (src/knowledge/promote.ts). Only candidates that clear all three gates
+  // (minScore, minRecallCount, minUniqueQueries) land in projects/. Every
+  // run drops an audit trail in ~/agent-knowledge/.dreams/YYYY-MM-DD.md.
   const config2 = getConfig();
   if (config2.autoDistill) {
     try {
-      console.error('[knowledge] Starting auto-distillation...');
-      const result = await distillSessions();
-      const total = result.updated.length + result.created.length;
-      if (total > 0) {
-        console.error(
-          `[knowledge] Distilled ${total} project(s): ${result.updated.length} updated, ${result.created.length} created`,
-        );
-      } else {
-        console.error('[knowledge] No new sessions to distill');
+      console.error('[knowledge] Starting auto-promotion (scored pass)...');
+      const result = await promote({ mode: 'apply' });
+      const { candidates, passed, promoted, skipped } = result.totals;
+      console.error(
+        `[knowledge] Promote run: ${candidates} candidate(s), ${passed} passed gates, ${promoted} written, ${skipped} skipped`,
+      );
+      if (result.diaryPath) {
+        console.error(`[knowledge] Dreams diary: ${result.diaryPath}`);
       }
     } catch (err) {
-      console.error(`[knowledge] Auto-distillation failed: ${err}`);
+      console.error(`[knowledge] Auto-promotion failed: ${err}`);
     }
   }
 }
