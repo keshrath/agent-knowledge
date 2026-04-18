@@ -211,7 +211,7 @@ Restart Claude Code to load the new MCP server. Every session will now:
   - Dump a final session summary on exit (sessionend-distill)
 
 Dashboard: http://localhost:3423 (auto-starts on first MCP connection)
-Knowledge base: ~/claude-memory/ (configurable via KNOWLEDGE_MEMORY_DIR)
+Knowledge base: ~/agent-knowledge/ (configurable via AGENT_KNOWLEDGE_MEMORY_DIR)
 
 See docs/hooks.md for details and docs/SETUP.md for manual configuration.
 `);

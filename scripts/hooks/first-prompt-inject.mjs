@@ -23,7 +23,7 @@
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT   (default "1") — set "0" to disable
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET   (default "600") — max chars/4 tokens
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS (default "4")   — cap on rendered hits
-//   KNOWLEDGE_MEMORY_DIR                  — resolves memory dir (same as core)
+//   AGENT_KNOWLEDGE_MEMORY_DIR                  — resolves memory dir (same as core)
 //
 // Fail-open: every error path prints `{}` so the host never blocks on this
 // hook. Log-only stderr for diagnostics.
@@ -75,11 +75,11 @@ function maxHits() {
 }
 
 function memoryDir() {
-  return process.env.KNOWLEDGE_MEMORY_DIR || path.join(homedir(), 'agent-knowledge');
+  return process.env.AGENT_KNOWLEDGE_MEMORY_DIR || path.join(homedir(), 'agent-knowledge');
 }
 
 function dataDir() {
-  if (process.env.KNOWLEDGE_DATA_DIR) return process.env.KNOWLEDGE_DATA_DIR;
+  if (process.env.AGENT_KNOWLEDGE_DATA_DIR) return process.env.AGENT_KNOWLEDGE_DATA_DIR;
   if (process.platform === 'win32') {
     return path.join(
       process.env.APPDATA || path.join(homedir(), 'AppData', 'Roaming'),

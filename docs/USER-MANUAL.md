@@ -95,14 +95,14 @@ npx agent-knowledge
 
 ### Environment Variables
 
-| Variable                 | Default             | Description                                    |
-| ------------------------ | ------------------- | ---------------------------------------------- |
-| `KNOWLEDGE_PORT`         | `3423`              | Dashboard HTTP/WebSocket port                  |
-| `KNOWLEDGE_DATA_DIR`     | `~/.claude`         | Base directory for Claude Code session data    |
-| `KNOWLEDGE_GIT_URL`      | (none)              | Git remote URL for knowledge base sync         |
-| `KNOWLEDGE_MEMORY_DIR`   | `~/agent-knowledge` | Local knowledge base directory                 |
-| `KNOWLEDGE_AUTO_DISTILL` | `true`              | Enable/disable session auto-distillation       |
-| `EXTRA_SESSION_ROOTS`    | (none)              | Comma-separated additional session directories |
+| Variable                              | Default             | Description                                     |
+| ------------------------------------- | ------------------- | ----------------------------------------------- |
+| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Dashboard HTTP/WebSocket port                   |
+| `AGENT_KNOWLEDGE_DATA_DIR`            | (platform config)   | Override primary host data root (auto-detected) |
+| `AGENT_KNOWLEDGE_GIT_URL`             | (none)              | Git remote URL for knowledge base sync          |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`          | `~/agent-knowledge` | Local knowledge base directory                  |
+| `AGENT_KNOWLEDGE_AUTO_DISTILL`        | `true`              | Enable/disable session auto-distillation        |
+| `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` | (none)              | Comma-separated additional session directories  |
 
 ### Claude Code Setup
 
@@ -147,7 +147,7 @@ knowledge_admin with action "config", auto_distill false
 
 ### Accessing the Dashboard
 
-The dashboard is available at **http://localhost:3423** (or the port configured via `KNOWLEDGE_PORT`).
+The dashboard is available at **http://localhost:3423** (or the port configured via `AGENT_KNOWLEDGE_PORT`).
 
 ### Knowledge Tab
 
@@ -901,13 +901,13 @@ On server startup (when `auto_distill` is enabled), past sessions are automatica
 
 Sessions are auto-discovered from installed AI coding tools:
 
-| Tool        | Location                                          |
-| ----------- | ------------------------------------------------- |
-| Claude Code | `$KNOWLEDGE_DATA_DIR/projects/` (JSONL files)     |
-| Cursor      | `~/.cursor/projects/*/agent-transcripts/` (JSONL) |
-| OpenCode    | `~/.local/share/opencode/opencode.db` (SQLite)    |
+| Tool        | Location                                            |
+| ----------- | --------------------------------------------------- |
+| Claude Code | `$AGENT_KNOWLEDGE_DATA_DIR/projects/` (JSONL files) |
+| Cursor      | `~/.cursor/projects/*/agent-transcripts/` (JSONL)   |
+| OpenCode    | `~/.local/share/opencode/opencode.db` (SQLite)      |
 
-Additional roots can be added via `EXTRA_SESSION_ROOTS` (comma-separated paths).
+Additional roots can be added via `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` (comma-separated paths).
 
 ### Search Modes
 
@@ -956,14 +956,14 @@ If no provider is available, search falls back to pure TF-IDF.
 
 **Solutions:**
 
-1. Set `KNOWLEDGE_PORT=3424` in the MCP config env.
+1. Set `AGENT_KNOWLEDGE_PORT=3424` in the MCP config env.
 2. Multiple MCP instances share the same database. Only one serves the dashboard.
 
 ### Search Returns No Results
 
 **Causes and solutions:**
 
-- **No sessions found**: Check that `KNOWLEDGE_DATA_DIR` points to the correct directory. Verify session files exist.
+- **No sessions found**: Check that `AGENT_KNOWLEDGE_DATA_DIR` points to the correct directory. Verify session files exist.
 - **Embeddings not available**: Semantic search requires an API key. Check the embedding provider configuration.
 - **Index not built**: Background indexing runs 5 seconds after startup. Wait for it to complete. Check stderr for `[knowledge] Background index` messages.
 
@@ -995,7 +995,7 @@ If no provider is available, search falls back to pure TF-IDF.
 **Solutions:**
 
 - The default directory is `~/agent-knowledge/`. Create it manually or let the git clone create it.
-- Override via `KNOWLEDGE_MEMORY_DIR` or `knowledge_admin(action: "config", memory_dir: "/path")`.
+- Override via `AGENT_KNOWLEDGE_MEMORY_DIR` or `knowledge_admin(action: "config", memory_dir: "/path")`.
 
 ---
 
@@ -1007,7 +1007,7 @@ Yes. agent-knowledge is a standard MCP server. It also auto-discovers sessions f
 
 ### Where are knowledge entries stored?
 
-In `~/agent-knowledge/` by default (configurable via `KNOWLEDGE_MEMORY_DIR`). Entries are plain Markdown files with YAML frontmatter, organized in category subdirectories.
+In `~/agent-knowledge/` by default (configurable via `AGENT_KNOWLEDGE_MEMORY_DIR`). Entries are plain Markdown files with YAML frontmatter, organized in category subdirectories.
 
 ### How does git sync work?
 
@@ -1040,4 +1040,4 @@ The distillation process applies regex patterns to detect and remove common secr
 
 ### Can I disable auto-distillation?
 
-Yes. Set `KNOWLEDGE_AUTO_DISTILL=false` as an environment variable, or use `knowledge_admin(action: "config", auto_distill: false)`.
+Yes. Set `AGENT_KNOWLEDGE_AUTO_DISTILL=false` as an environment variable, or use `knowledge_admin(action: "config", auto_distill: false)`.

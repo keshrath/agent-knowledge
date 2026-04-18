@@ -22,12 +22,12 @@ describe('staleByCodeActivity', () => {
 
   beforeEach(() => {
     tmpKB = mkdtempSync(join(tmpdir(), 'agent-knowledge-freshness-'));
-    process.env.KNOWLEDGE_MEMORY_DIR = tmpKB;
+    process.env.AGENT_KNOWLEDGE_MEMORY_DIR = tmpKB;
   });
 
   afterEach(() => {
     rmSync(tmpKB, { recursive: true, force: true });
-    delete process.env.KNOWLEDGE_MEMORY_DIR;
+    delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
   });
 
   function writeEntry(rel: string, body: string, ageDays = 90): void {

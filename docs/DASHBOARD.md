@@ -17,12 +17,18 @@ Card grid of knowledge entries. Each card shows:
 
 - Category badge with color: projects (blue), people (purple), decisions (orange), workflows (green), notes (yellow)
 - **Maturity badge**: candidate (gray), established (blue), proven (green) — based on access frequency
+- **Pin badge** (Material Symbols `push_pin`) when the entry has `evergreen: true` frontmatter — these entries are exempt from decay in ranking and append-only under promotion.
+- **Author chip** (muted, footer row) when the entry has `author: <string>` frontmatter — surfaces who wrote or owns it.
 - Title and tag pills
 - Last updated date
 
 ![Knowledge entries with maturity badges](assets/knowledge-maturity.png)
 
 Category filter chips at the top: All, Projects, People, Decisions, Workflows, Notes. Search bar for filtering entries by title.
+
+**Unused filter chip** (top-right of the header): shows `Unused (N)` where `N` is the count of entries past their per-category staleness threshold. Click to filter the grid to just those entries; click again to clear. Auto-hides when the count is zero.
+
+**By Type access chart** (between the tabs and the grid): a horizontal bar per canonical category, row-normalized so each bar fills its own track. Green share = accessed within the per-category recent window, orange = unused. Volume comparison via the right-side `accessed/unused` counts. Per-category thresholds: `projects` 180/365d, `people` 365/730d, `decisions` 90/180d, `workflows` 60/120d, `notes` 30/90d.
 
 **Header action buttons:**
 

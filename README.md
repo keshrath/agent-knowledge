@@ -36,32 +36,37 @@ Sessions from all major AI coding assistants are auto-discovered -- if a tool is
 
 | Tool             | Format         | Auto-detected path                                              |
 | ---------------- | -------------- | --------------------------------------------------------------- |
-| **Claude Code**  | JSONL          | `$KNOWLEDGE_DATA_DIR/projects/` (default `~/.claude/projects/`) |
+| **Claude Code**  | JSONL          | `~/.claude/projects/`                                           |
 | **Cursor**       | JSONL          | `~/.cursor/projects/*/agent-transcripts/`                       |
-| **OpenCode**     | SQLite         | `~/.local/share/opencode/opencode.db` (or `$OPENCODE_DATA_DIR`) |
-| **Cline**        | JSON           | VS Code globalStorage `saoudrizwan.claude-dev/tasks/`           |
-| **Continue.dev** | JSON           | `~/.continue/sessions/`                                         |
+| **Codex CLI**    | JSONL          | `~/.codex/projects/`                                            |
 | **Aider**        | Markdown/JSONL | `.aider.chat.history.md` / `.aider.llm.history` in project dirs |
+| **Continue.dev** | JSON           | `~/.continue/projects/`                                         |
+| **Cline**        | JSON           | VS Code globalStorage `saoudrizwan.claude-dev/tasks/`           |
+| **OpenCode**     | SQLite         | `~/.local/share/opencode/opencode.db` (or `$OPENCODE_DATA_DIR`) |
 
-No configuration needed. Additional session roots can be added via the `EXTRA_SESSION_ROOTS` env var (comma-separated paths).
+No configuration needed. Additional session roots can be added via the `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` env var (comma-separated paths).
 
 ## Features
 
-- **Multi-tool session search** -- unified search across Claude Code, Cursor, OpenCode, Cline, Continue.dev, and Aider sessions
+- **Host-agnostic session search** -- unified search across every major AI coding assistant (Claude Code, Cursor, Codex CLI, Aider, Continue.dev, Cline, OpenCode). No host name is baked into configuration — the adapter registry probes installed host roots at startup.
 - **Hybrid search** -- semantic vector similarity blended with TF-IDF keyword ranking
 - **Git-synced knowledge base** -- markdown vault with YAML frontmatter, auto commit and push on writes
+- **Automatic staleness detection (v1.8.1)** -- `knowledge_analyze(action: "stale_by_code_activity")` cross-references file paths mentioned in each entry body against `filesModified` in recent session summaries. Pairs with a symbol-presence precision layer: identifiers the entry quotes (inline backticks + fenced blocks) are checked in the touched file; if they still exist, confidence downweights ×0.3. Entries with `evergreen: true` are exempt.
+- **Search-gap tracking (v1.8.1)** -- `knowledge_analyze(action: "search_gaps")` surfaces zero-result queries over the last `since_days`, grouped by token-Jaccard similarity. The clearest signal for "what entries should I write next?".
+- **Section-priority context packer (v1.8.1)** -- `knowledge(action: "wakeup")` assembles a multi-section bundle (`identity` → `active_tasks` → `recent_decisions` → `known_gotchas` → `last_session_summary` → `top_weighted` → `semantic_fallback`) within a token budget. Unused section budget redistributes to later sections.
 - **Scored + gated promoter (v1.8)** -- session insights promoted via a 6-signal weighted scorer with three independent gates (`minScore`, `minRecallCount`, `minUniqueQueries`). Runs automatically in background, on demand via `knowledge_admin(action: "promote")`, or benchable offline via `npm run bench:promote`. Emits an auditable `.dreams/YYYY-MM-DD.md` diary every run. Replaces the regex-only distiller.
 - **Pluggable adapter system** -- add support for new tools by implementing the `SessionAdapter` interface
 - **Embeddings** -- local (Hugging Face), OpenAI, Claude/Voyage, or Gemini providers
 - **Fuzzy matching** -- typo-tolerant search using Levenshtein distance
 - **6 search scopes** -- errors, plans, configs, tools, files, decisions
 - **6 MCP tools** -- consolidated action-based interface (`knowledge`, `knowledge_search`, `knowledge_session`, `knowledge_graph`, `knowledge_analyze`, `knowledge_admin`)
-- **Wakeup context (L0+L1)** -- `knowledge` action `wakeup` returns a token-budgeted identity + top-weight entries blob for session-start hydration
+- **Evergreen entries (v1.8)** -- `evergreen: true` in frontmatter exempts an entry from decay in ranking AND makes it append-only under promotion. Dashboard renders a push-pin badge on these cards.
+- **Author attribution (v1.8.1)** -- optional `author: <string>` frontmatter surfaces as a muted chip on each card.
 - **Code graph resolution** -- `calls`, `imports`, `inherits` edge types for code structure; directed BFS traversal (`outbound`/`inbound`/`both`); `bulk_link` for efficient ingestion; `unlink_by_origin` for clearing stale code edges before re-ingest; `code:` prefixed node IDs distinguish code from knowledge
 - **Temporal knowledge graph** -- edges support `valid_from` / `valid_to` validity windows; `as_of` queries return point-in-time snapshots; `invalidate` action marks facts as ended without deleting them
 - **Hybrid scoring boosts** -- proper-noun and temporal-proximity boosts on top of TF-IDF + semantic blend, capped at +66.7%, short-circuit when no signals are present
 - **Category as boost (not filter)** -- opt into `category_mode: "boost"` so a wrong category guess down-ranks instead of discarding the right answer
-- **Verbatim session indexing** -- per-message chunks (≥30 chars) embedded into the vector store so raw conversation is retrievable; toggle with `KNOWLEDGE_INDEX_VERBATIM=false`
+- **Verbatim session indexing** -- per-message chunks (≥30 chars) embedded into the vector store so raw conversation is retrievable; toggle with `AGENT_KNOWLEDGE_INDEX_VERBATIM=false`
 - **Configurable git URL** -- `knowledge_admin(action: "config")` for runtime setup, persisted at XDG/AppData location
 - **Cross-machine persistence** -- knowledge syncs via git, sessions read from local storage of each tool
 - **Real-time dashboard** -- browse, search, and manage at `localhost:3423`
@@ -76,6 +81,9 @@ No configuration needed. Additional session roots can be added via the `EXTRA_SE
 - **Knowledge brief** — `knowledge_analyze(action: "brief")` returns a cached ~200 token summary (core concepts, active projects, recent decisions, stale and gap counts) for session-start orientation
 - **Edge provenance** — graph edges track `origin` (manual, auto-link, distill, reflect) so analysis can distinguish user judgment from automated heuristics
 - **Deterministic pre-extraction in distillation** — session summaries now include git commits, error patterns, URLs accessed, and packages changed extracted via regex from bash/tool output (no LLM cost)
+- **Freshness metadata on every search hit (v1.8.1)** — every knowledge result carries `freshness: { body_age_days, last_accessed, access_count, verified_at, verification_age_days, evergreen }`. Agent reads the trust signal and decides; we impose no policy demotion.
+- **Per-category decay windows (v1.8.1)** — the "Unused" filter and bytype chart honor per-category thresholds (projects 180d, people 365d, decisions 90d, workflows 60d, notes 30d) so identity-shaped content doesn't look stale just because it isn't re-read weekly.
+- **Lifecycle hooks** — `SessionStart` auto-wakeup, `UserPromptSubmit` first-prompt targeted injection, `PreCompact` memory-flush nudge. Every hook is fail-open and toggleable via an `AGENT_KNOWLEDGE_*` env var.
 
 ## Codebase Ingestion
 
@@ -381,19 +389,56 @@ npm run lint          # Type-check (tsc --noEmit)
 
 ## Environment Variables
 
-| Variable                                            | Default             | Description                                                           |
-| --------------------------------------------------- | ------------------- | --------------------------------------------------------------------- |
-| `KNOWLEDGE_MEMORY_DIR`                              | `~/agent-knowledge` | Path to git-synced knowledge base                                     |
-| `KNOWLEDGE_GIT_URL`                                 | --                  | Git remote URL (auto-clones if dir missing)                           |
-| `KNOWLEDGE_AUTO_DISTILL`                            | `true`              | Auto-distill session insights to knowledge base                       |
-| `KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider: `local`, `openai`, `claude`, `gemini`             |
-| `KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.3`               | TF-IDF vs semantic blend weight (0=pure semantic, 1=pure TF-IDF)      |
-| `KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | `60`                | Seconds before unloading local model from memory (0 = keep alive)     |
-| `KNOWLEDGE_DATA_DIR`                                | `~/.claude`         | Primary session data directory (Claude Code JSONL files)              |
-| `EXTRA_SESSION_ROOTS`                               | --                  | Additional session directories, comma-separated paths                 |
-| `OPENCODE_DATA_DIR`                                 | (see below)         | Override OpenCode data directory (default: `~/.local/share/opencode`) |
-| `KNOWLEDGE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` | --                  | API key for Claude/Voyage embeddings                                  |
-| `KNOWLEDGE_PORT`                                    | `3423`              | Dashboard HTTP port                                                   |
+All env vars live under the `AGENT_KNOWLEDGE_*` prefix. No host name is baked in — the adapter registry auto-detects installed AI coding hosts (`.claude`, `.cursor`, `.codex`, `.aider`, `.continue`, OpenCode) without configuration.
+
+### Core
+
+| Variable                              | Default             | Description                                                                                                                       |
+| ------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`          | `~/agent-knowledge` | Git-synced knowledge base directory                                                                                               |
+| `AGENT_KNOWLEDGE_GIT_URL`             | --                  | Git remote URL (auto-clones if dir missing)                                                                                       |
+| `AGENT_KNOWLEDGE_AUTO_DISTILL`        | `true`              | Auto-distill session insights into the knowledge base                                                                             |
+| `AGENT_KNOWLEDGE_INDEX_VERBATIM`      | `true`              | Index raw session message chunks into the vector store so conversation is retrievable later. Set `false` to save disk at scale.   |
+| `AGENT_KNOWLEDGE_DATA_DIR`            | (platform config)   | Override the primary host data root. Leave unset in the common case — adapters auto-detect every well-known host root under `~/`. |
+| `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` | --                  | Extra session directories, comma-separated. Added to whatever auto-detection finds.                                               |
+| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Dashboard HTTP/WebSocket port                                                                                                     |
+
+### Embeddings
+
+| Variable                                 | Default | Description                                                              |
+| ---------------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`     | `local` | `local` \| `openai` \| `claude` \| `gemini`                              |
+| `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`        | `0.3`   | TF-IDF vs semantic blend weight (`0` = pure semantic, `1` = pure TF-IDF) |
+| `AGENT_KNOWLEDGE_EMBEDDING_MODEL`        | --      | Override provider default model                                          |
+| `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT` | `60`    | Seconds before unloading the local model (`0` = keep loaded)             |
+| `AGENT_KNOWLEDGE_EMBEDDING_THREADS`      | (auto)  | ONNX / OMP thread count for the local provider                           |
+
+### API keys
+
+Project-scoped overrides win over the standard keys. Set either; the scoped form lets you run agent-knowledge with a different key than the rest of your environment.
+
+| Variable                            | Fallback            | Description                |
+| ----------------------------------- | ------------------- | -------------------------- |
+| `AGENT_KNOWLEDGE_OPENAI_API_KEY`    | `OPENAI_API_KEY`    | OpenAI embeddings          |
+| `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | Claude / Voyage embeddings |
+| `AGENT_KNOWLEDGE_GEMINI_API_KEY`    | `GEMINI_API_KEY`    | Gemini embeddings          |
+
+### Hooks (v1.8 lifecycle integration)
+
+| Variable                               | Default | Description                                                                                                                                               |
+| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_AUTOWAKE`             | `1`     | Auto-inject a `knowledge(action: wakeup)` bundle into `SessionStart`. Set `0` to disable.                                                                 |
+| `AGENT_KNOWLEDGE_WAKEUP_BUDGET`        | `800`   | Tokens for the wakeup bundle                                                                                                                              |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`     | Run a targeted `knowledge_search` on the first user prompt and inject top hits. `0` / `false` / `off` to disable.                                         |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`   | Tokens for first-prompt injection (clamp `[100, 8000]`)                                                                                                   |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`     | Max knowledge hits attached to the first prompt (clamp `[1, 20]`)                                                                                         |
+| `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE`     | `1`     | Before pre-compaction, nudge the agent to save context via `knowledge(action: write)`. `0` disables the nudge; `off` suppresses both nudge and disk dump. |
+
+### External tool overrides
+
+| Variable            | Default                   | Description                                                                             |
+| ------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
+| `OPENCODE_DATA_DIR` | `~/.local/share/opencode` | Override where OpenCode's session DB lives (OpenCode's own env, honored by our adapter) |
 
 ## Documentation
 

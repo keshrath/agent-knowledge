@@ -61,7 +61,7 @@ so the user's next real question still gets injection.
 | `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`                 | Set `0` / `false` / `off` to disable                    |
 | `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`               | Max tokens (chars/4 estimate), clamped to `[100, 8000]` |
 | `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`                 | Max rendered entries, clamped to `[1, 20]`              |
-| `KNOWLEDGE_MEMORY_DIR`                 | `~/agent-knowledge` | Knowledge base to search                                |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`           | `~/agent-knowledge` | Knowledge base to search                                |
 
 ## precompact-flush.mjs
 
@@ -79,7 +79,7 @@ Called right before the host compacts the transcript. Two jobs:
 
 | Variable                           | Default             | Description                                                                                          |
 | ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------- |
-| `KNOWLEDGE_MEMORY_DIR`             | `~/agent-knowledge` | Where rich summaries are written                                                                     |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`       | `~/agent-knowledge` | Where rich summaries are written                                                                     |
 | `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE` | `1`                 | Set `0` / `false` to disable the nudge only. Set `off` to suppress both the nudge AND the disk dump. |
 
 ## precompact-distill.mjs
@@ -87,22 +87,22 @@ Called right before the host compacts the transcript. Two jobs:
 A simpler heuristic companion to `precompact-flush.mjs`. Reads the last
 ~200 KB of the transcript JSONL, extracts the last 10 user prompts, and
 writes them to
-`~/claude-memory/projects/precompact-<slug>-<session>.md`. This one does
+`~/agent-knowledge/projects/precompact-<slug>-<session>.md`. This one does
 not require the library to be built, so it still works when `dist/` is
 missing. Running both is fine — they target different files.
 
 ### Environment variables
 
-| Variable               | Default           | Description                                       |
-| ---------------------- | ----------------- | ------------------------------------------------- |
-| `KNOWLEDGE_MEMORY_DIR` | `~/claude-memory` | Where the snapshot is written (`<dir>/projects/`) |
+| Variable                     | Default             | Description                                       |
+| ---------------------------- | ------------------- | ------------------------------------------------- |
+| `AGENT_KNOWLEDGE_MEMORY_DIR` | `~/agent-knowledge` | Where the snapshot is written (`<dir>/projects/`) |
 
 ## sessionend-distill.mjs
 
 On `SessionEnd`, walks the whole transcript JSONL, counts user / assistant
 turns and `tool_use` blocks, collects the first 20 user prompts, and writes
 a markdown summary to
-`~/claude-memory/projects/session-<slug>-<session>.md`. Gives
+`~/agent-knowledge/projects/session-<slug>-<session>.md`. Gives
 agent-knowledge a breadcrumb for later session search/recall.
 
 ## Manual configuration

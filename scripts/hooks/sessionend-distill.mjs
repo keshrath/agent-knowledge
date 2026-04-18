@@ -21,7 +21,7 @@ process.on('uncaughtException', (err) => {
   process.exit(0);
 });
 
-const MEMORY_DIR = process.env.KNOWLEDGE_MEMORY_DIR || join(homedir(), 'claude-memory');
+const MEMORY_DIR = process.env.AGENT_KNOWLEDGE_MEMORY_DIR || join(homedir(), 'agent-knowledge');
 
 async function main() {
   let input = '';

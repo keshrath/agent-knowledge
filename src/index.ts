@@ -4,7 +4,7 @@ import { createServer } from './server.js';
 import { startDashboard } from './dashboard.js';
 
 async function main() {
-  const port = parseInt(process.env.KNOWLEDGE_PORT || '3423', 10);
+  const port = parseInt(process.env.AGENT_KNOWLEDGE_PORT || '3423', 10);
 
   let isLeader = false;
   try {

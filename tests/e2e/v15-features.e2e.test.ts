@@ -9,7 +9,7 @@
  * with a real KnowledgeGraph (real SQLite), and asserts user-visible behavior.
  *
  * No mocks of internal components — uses `resetKnowledgeGraph` /
- * `resetEntryScoring` + per-test `KNOWLEDGE_DATA_DIR` so each test gets an
+ * `resetEntryScoring` + per-test `AGENT_KNOWLEDGE_DATA_DIR` so each test gets an
  * isolated graph DB and scoring DB.
  */
 
@@ -58,14 +58,14 @@ function writeEntry(
 describe('e2e v1.5: confidence metadata', () => {
   let memoryDir: string;
   let dataDir: string;
-  const prevMem = process.env.KNOWLEDGE_MEMORY_DIR;
-  const prevData = process.env.KNOWLEDGE_DATA_DIR;
+  const prevMem = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  const prevData = process.env.AGENT_KNOWLEDGE_DATA_DIR;
 
   beforeEach(() => {
     memoryDir = makeTmpMemoryDir();
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ak-e2e-v15-data-'));
-    process.env.KNOWLEDGE_MEMORY_DIR = memoryDir;
-    process.env.KNOWLEDGE_DATA_DIR = dataDir;
+    process.env.AGENT_KNOWLEDGE_MEMORY_DIR = memoryDir;
+    process.env.AGENT_KNOWLEDGE_DATA_DIR = dataDir;
     resetKnowledgeGraph();
     resetEntryScoring();
     invalidateKnowledgeIndexCache();
@@ -77,10 +77,10 @@ describe('e2e v1.5: confidence metadata', () => {
     resetEntryScoring();
     invalidateKnowledgeIndexCache();
     invalidateBriefCache();
-    if (prevMem === undefined) delete process.env.KNOWLEDGE_MEMORY_DIR;
-    else process.env.KNOWLEDGE_MEMORY_DIR = prevMem;
-    if (prevData === undefined) delete process.env.KNOWLEDGE_DATA_DIR;
-    else process.env.KNOWLEDGE_DATA_DIR = prevData;
+    if (prevMem === undefined) delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+    else process.env.AGENT_KNOWLEDGE_MEMORY_DIR = prevMem;
+    if (prevData === undefined) delete process.env.AGENT_KNOWLEDGE_DATA_DIR;
+    else process.env.AGENT_KNOWLEDGE_DATA_DIR = prevData;
     try {
       fs.rmSync(memoryDir, { recursive: true, force: true });
     } catch {
@@ -229,8 +229,8 @@ interface SingletonTestCtx {
 function makeSingletonCtx(): SingletonTestCtx {
   const memoryDir = makeTmpMemoryDir();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ak-e2e-v15-data-'));
-  process.env.KNOWLEDGE_MEMORY_DIR = memoryDir;
-  process.env.KNOWLEDGE_DATA_DIR = dataDir;
+  process.env.AGENT_KNOWLEDGE_MEMORY_DIR = memoryDir;
+  process.env.AGENT_KNOWLEDGE_DATA_DIR = dataDir;
   resetKnowledgeGraph();
   resetEntryScoring();
   invalidateBriefCache();
@@ -249,10 +249,10 @@ function teardownSingletonCtx(
   resetEntryScoring();
   invalidateBriefCache();
   invalidateKnowledgeIndexCache();
-  if (prevMem === undefined) delete process.env.KNOWLEDGE_MEMORY_DIR;
-  else process.env.KNOWLEDGE_MEMORY_DIR = prevMem;
-  if (prevData === undefined) delete process.env.KNOWLEDGE_DATA_DIR;
-  else process.env.KNOWLEDGE_DATA_DIR = prevData;
+  if (prevMem === undefined) delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  else process.env.AGENT_KNOWLEDGE_MEMORY_DIR = prevMem;
+  if (prevData === undefined) delete process.env.AGENT_KNOWLEDGE_DATA_DIR;
+  else process.env.AGENT_KNOWLEDGE_DATA_DIR = prevData;
   try {
     fs.rmSync(ctx.memoryDir, { recursive: true, force: true });
   } catch {
@@ -269,8 +269,8 @@ function teardownSingletonCtx(
 
 describe('e2e v1.5: godNodes', () => {
   let ctx: SingletonTestCtx;
-  const prevMem = process.env.KNOWLEDGE_MEMORY_DIR;
-  const prevData = process.env.KNOWLEDGE_DATA_DIR;
+  const prevMem = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  const prevData = process.env.AGENT_KNOWLEDGE_DATA_DIR;
 
   beforeEach(() => {
     ctx = makeSingletonCtx();
@@ -327,8 +327,8 @@ describe('e2e v1.5: godNodes', () => {
 
 describe('e2e v1.5: bridges', () => {
   let ctx: SingletonTestCtx;
-  const prevMem = process.env.KNOWLEDGE_MEMORY_DIR;
-  const prevData = process.env.KNOWLEDGE_DATA_DIR;
+  const prevMem = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  const prevData = process.env.AGENT_KNOWLEDGE_DATA_DIR;
 
   beforeEach(() => {
     ctx = makeSingletonCtx();
@@ -384,8 +384,8 @@ describe('e2e v1.5: bridges', () => {
 
 describe('e2e v1.5: gaps', () => {
   let ctx: SingletonTestCtx;
-  const prevMem = process.env.KNOWLEDGE_MEMORY_DIR;
-  const prevData = process.env.KNOWLEDGE_DATA_DIR;
+  const prevMem = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  const prevData = process.env.AGENT_KNOWLEDGE_DATA_DIR;
 
   beforeEach(() => {
     ctx = makeSingletonCtx();
@@ -469,8 +469,8 @@ describe('e2e v1.5: gaps', () => {
 
 describe('e2e v1.5: knowledge brief', () => {
   let ctx: SingletonTestCtx;
-  const prevMem = process.env.KNOWLEDGE_MEMORY_DIR;
-  const prevData = process.env.KNOWLEDGE_DATA_DIR;
+  const prevMem = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  const prevData = process.env.AGENT_KNOWLEDGE_DATA_DIR;
 
   beforeEach(() => {
     ctx = makeSingletonCtx();

@@ -1,8 +1,8 @@
 // =============================================================================
 // agent-knowledge — Playwright E2E dashboard test
 //
-// Boots the standalone HTTP+WS dashboard with a temp KNOWLEDGE_MEMORY_DIR /
-// KNOWLEDGE_DATA_DIR so the real ~/agent-knowledge/ is never touched. Seeds a
+// Boots the standalone HTTP+WS dashboard with a temp AGENT_KNOWLEDGE_MEMORY_DIR /
+// AGENT_KNOWLEDGE_DATA_DIR so the real ~/agent-knowledge/ is never touched. Seeds a
 // few markdown entries, then drives the dashboard with chromium and verifies
 // the grid renders, the search box returns the seeded entry, and the detail
 // panel opens on click.
@@ -41,8 +41,8 @@ async function freePort(): Promise<number> {
 test.beforeAll(async () => {
   tempMemoryDir = mkdtempSync(join(tmpdir(), 'agent-knowledge-mem-'));
   tempDataDir = mkdtempSync(join(tmpdir(), 'agent-knowledge-data-'));
-  process.env.KNOWLEDGE_MEMORY_DIR = tempMemoryDir;
-  process.env.KNOWLEDGE_DATA_DIR = tempDataDir;
+  process.env.AGENT_KNOWLEDGE_MEMORY_DIR = tempMemoryDir;
+  process.env.AGENT_KNOWLEDGE_DATA_DIR = tempDataDir;
 
   // Seed three markdown entries via the store API after env is set so any
   // store-side path resolution picks up the temp dir.

@@ -82,7 +82,7 @@ function runHook(
 }
 
 const scratch = mkdtempSync(join(tmpdir(), 'agent-knowledge-hooks-'));
-const isolatedEnv = { KNOWLEDGE_MEMORY_DIR: scratch };
+const isolatedEnv = { AGENT_KNOWLEDGE_MEMORY_DIR: scratch };
 
 // ---------------------------------------------------------------------------
 // session-start.js
@@ -258,7 +258,7 @@ describe('first-prompt-inject.mjs', () => {
         session_id: 'sess-positive',
         prompt: 'why did we go with postgres for the database connection',
       },
-      { env: { KNOWLEDGE_MEMORY_DIR: kb, KNOWLEDGE_DATA_DIR: freshDataDir() } },
+      { env: { AGENT_KNOWLEDGE_MEMORY_DIR: kb, AGENT_KNOWLEDGE_DATA_DIR: freshDataDir() } },
     );
 
     expect(code).toBe(0);
@@ -288,8 +288,8 @@ describe('first-prompt-inject.mjs', () => {
       { session_id: 'sess-tiny', prompt: 'postgres database connection pooling' },
       {
         env: {
-          KNOWLEDGE_MEMORY_DIR: kb,
-          KNOWLEDGE_DATA_DIR: freshDataDir(),
+          AGENT_KNOWLEDGE_MEMORY_DIR: kb,
+          AGENT_KNOWLEDGE_DATA_DIR: freshDataDir(),
           AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET: '100',
         },
       },
@@ -299,8 +299,8 @@ describe('first-prompt-inject.mjs', () => {
       { session_id: 'sess-generous', prompt: 'postgres database connection pooling' },
       {
         env: {
-          KNOWLEDGE_MEMORY_DIR: kb,
-          KNOWLEDGE_DATA_DIR: freshDataDir(),
+          AGENT_KNOWLEDGE_MEMORY_DIR: kb,
+          AGENT_KNOWLEDGE_DATA_DIR: freshDataDir(),
           AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET: '2000',
         },
       },
@@ -319,10 +319,10 @@ describe('first-prompt-inject.mjs', () => {
 
   it('fails open on empty + non-JSON stdin', async () => {
     const r1 = await runHook('first-prompt-inject.mjs', '', {
-      env: { ...isolatedEnv, KNOWLEDGE_DATA_DIR: freshDataDir() },
+      env: { ...isolatedEnv, AGENT_KNOWLEDGE_DATA_DIR: freshDataDir() },
     });
     const r2 = await runHook('first-prompt-inject.mjs', 'junk', {
-      env: { ...isolatedEnv, KNOWLEDGE_DATA_DIR: freshDataDir() },
+      env: { ...isolatedEnv, AGENT_KNOWLEDGE_DATA_DIR: freshDataDir() },
     });
     expect(r1.code).toBe(0);
     expect(r1.json).toEqual({});
@@ -338,7 +338,7 @@ describe('first-prompt-inject.mjs', () => {
     ];
     for (const input of casesThatMustSkip) {
       const { json } = await runHook('first-prompt-inject.mjs', input, {
-        env: { ...isolatedEnv, KNOWLEDGE_DATA_DIR: freshDataDir() },
+        env: { ...isolatedEnv, AGENT_KNOWLEDGE_DATA_DIR: freshDataDir() },
       });
       expect(json).toEqual({});
     }
@@ -351,7 +351,7 @@ describe('first-prompt-inject.mjs', () => {
       {
         env: {
           ...isolatedEnv,
-          KNOWLEDGE_DATA_DIR: freshDataDir(),
+          AGENT_KNOWLEDGE_DATA_DIR: freshDataDir(),
           AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT: '0',
         },
       },
@@ -362,7 +362,7 @@ describe('first-prompt-inject.mjs', () => {
   it('fires at most once per session id (marker file idempotency)', async () => {
     const dataDir = freshDataDir();
     const sid = 'sess-once';
-    const env = { ...isolatedEnv, KNOWLEDGE_DATA_DIR: dataDir };
+    const env = { ...isolatedEnv, AGENT_KNOWLEDGE_DATA_DIR: dataDir };
 
     await runHook(
       'first-prompt-inject.mjs',
@@ -397,7 +397,7 @@ describe('first-prompt-inject.mjs', () => {
     );
     const dataDir = freshDataDir();
     const sid = 'sess-skip-then-real';
-    const env = { KNOWLEDGE_MEMORY_DIR: kb, KNOWLEDGE_DATA_DIR: dataDir };
+    const env = { AGENT_KNOWLEDGE_MEMORY_DIR: kb, AGENT_KNOWLEDGE_DATA_DIR: dataDir };
 
     // First prompt is a slash command — must not burn the marker.
     const slashRun = await runHook(
@@ -426,8 +426,8 @@ describe('first-prompt-inject.mjs', () => {
       { session_id: 'sess-no-kb', prompt: 'any question long enough to pass the length gate' },
       {
         env: {
-          KNOWLEDGE_MEMORY_DIR: join(scratch, 'nonexistent-kb'),
-          KNOWLEDGE_DATA_DIR: freshDataDir(),
+          AGENT_KNOWLEDGE_MEMORY_DIR: join(scratch, 'nonexistent-kb'),
+          AGENT_KNOWLEDGE_DATA_DIR: freshDataDir(),
         },
       },
     );

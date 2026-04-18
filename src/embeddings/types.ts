@@ -40,11 +40,13 @@ export interface EmbeddingConfig {
 /** Read embedding configuration from environment variables. */
 export function getEmbeddingConfig(): EmbeddingConfig {
   return {
-    provider: (process.env.KNOWLEDGE_EMBEDDING_PROVIDER as ProviderName) || 'local',
-    alpha: parseFloat(process.env.KNOWLEDGE_EMBEDDING_ALPHA || '0.3'),
-    openaiApiKey: process.env.KNOWLEDGE_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-    anthropicApiKey: process.env.KNOWLEDGE_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
-    geminiApiKey: process.env.KNOWLEDGE_GEMINI_API_KEY || process.env.GEMINI_API_KEY,
-    modelOverride: process.env.KNOWLEDGE_EMBEDDING_MODEL,
+    provider: (process.env.AGENT_KNOWLEDGE_EMBEDDING_PROVIDER as ProviderName) || 'local',
+    alpha: parseFloat(process.env.AGENT_KNOWLEDGE_EMBEDDING_ALPHA || '0.3'),
+    // Project-scoped overrides for third-party keys win over the standard
+    // `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` fallbacks.
+    openaiApiKey: process.env.AGENT_KNOWLEDGE_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+    anthropicApiKey: process.env.AGENT_KNOWLEDGE_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+    geminiApiKey: process.env.AGENT_KNOWLEDGE_GEMINI_API_KEY || process.env.GEMINI_API_KEY,
+    modelOverride: process.env.AGENT_KNOWLEDGE_EMBEDDING_MODEL,
   };
 }

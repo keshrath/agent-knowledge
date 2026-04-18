@@ -31,17 +31,17 @@ function writeEntry(dir: string, rel: string, frontmatter: Record<string, string
 
 describe('e2e: knowledge action=wakeup', () => {
   let memoryDir: string;
-  const prevEnv = process.env.KNOWLEDGE_MEMORY_DIR;
+  const prevEnv = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
 
   beforeEach(() => {
     memoryDir = makeTmpMemoryDir();
-    process.env.KNOWLEDGE_MEMORY_DIR = memoryDir;
+    process.env.AGENT_KNOWLEDGE_MEMORY_DIR = memoryDir;
     invalidateKnowledgeIndexCache();
   });
 
   afterEach(() => {
-    if (prevEnv === undefined) delete process.env.KNOWLEDGE_MEMORY_DIR;
-    else process.env.KNOWLEDGE_MEMORY_DIR = prevEnv;
+    if (prevEnv === undefined) delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+    else process.env.AGENT_KNOWLEDGE_MEMORY_DIR = prevEnv;
     fs.rmSync(memoryDir, { recursive: true, force: true });
   });
 
@@ -91,11 +91,11 @@ describe('e2e: knowledge action=wakeup', () => {
 
 describe('e2e: knowledge_search categoryMode', () => {
   let memoryDir: string;
-  const prevEnv = process.env.KNOWLEDGE_MEMORY_DIR;
+  const prevEnv = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
 
   beforeEach(() => {
     memoryDir = makeTmpMemoryDir();
-    process.env.KNOWLEDGE_MEMORY_DIR = memoryDir;
+    process.env.AGENT_KNOWLEDGE_MEMORY_DIR = memoryDir;
     invalidateKnowledgeIndexCache();
 
     // Same query target lives in two categories — once in `decisions`,
@@ -115,8 +115,8 @@ describe('e2e: knowledge_search categoryMode', () => {
   });
 
   afterEach(() => {
-    if (prevEnv === undefined) delete process.env.KNOWLEDGE_MEMORY_DIR;
-    else process.env.KNOWLEDGE_MEMORY_DIR = prevEnv;
+    if (prevEnv === undefined) delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+    else process.env.AGENT_KNOWLEDGE_MEMORY_DIR = prevEnv;
     fs.rmSync(memoryDir, { recursive: true, force: true });
     invalidateKnowledgeIndexCache();
   });
@@ -220,16 +220,16 @@ describe('e2e: knowledge_graph temporal validity', () => {
 
 describe('e2e: knowledge action=wakeup ranks higher-weight entries first', () => {
   let memoryDir: string;
-  const prevEnv = process.env.KNOWLEDGE_MEMORY_DIR;
+  const prevEnv = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
 
   beforeEach(() => {
     memoryDir = makeTmpMemoryDir();
-    process.env.KNOWLEDGE_MEMORY_DIR = memoryDir;
+    process.env.AGENT_KNOWLEDGE_MEMORY_DIR = memoryDir;
   });
 
   afterEach(() => {
-    if (prevEnv === undefined) delete process.env.KNOWLEDGE_MEMORY_DIR;
-    else process.env.KNOWLEDGE_MEMORY_DIR = prevEnv;
+    if (prevEnv === undefined) delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+    else process.env.AGENT_KNOWLEDGE_MEMORY_DIR = prevEnv;
     fs.rmSync(memoryDir, { recursive: true, force: true });
   });
 

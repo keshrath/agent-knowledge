@@ -75,7 +75,7 @@ This detects Claude Code, registers the MCP server in `~/.claude.json`, wires al
 
 ```bash
 claude mcp add agent-knowledge -s user \
-  -e KNOWLEDGE_MEMORY_DIR="$HOME/agent-knowledge" \
+  -e AGENT_KNOWLEDGE_MEMORY_DIR="$HOME/agent-knowledge" \
   -- node /path/to/agent-knowledge/dist/index.js
 ```
 
@@ -110,8 +110,8 @@ claude mcp list
       "type": "local",
       "command": ["node", "/absolute/path/to/agent-knowledge/dist/index.js"],
       "environment": {
-        "KNOWLEDGE_MEMORY_DIR": "/home/you/agent-knowledge",
-        "KNOWLEDGE_PORT": "3423"
+        "AGENT_KNOWLEDGE_MEMORY_DIR": "/home/you/agent-knowledge",
+        "AGENT_KNOWLEDGE_PORT": "3423"
       }
     }
   }
@@ -129,8 +129,8 @@ claude mcp list
       "command": "node",
       "args": ["/absolute/path/to/agent-knowledge/dist/index.js"],
       "env": {
-        "KNOWLEDGE_MEMORY_DIR": "/home/you/agent-knowledge",
-        "KNOWLEDGE_PORT": "3423"
+        "AGENT_KNOWLEDGE_MEMORY_DIR": "/home/you/agent-knowledge",
+        "AGENT_KNOWLEDGE_PORT": "3423"
       }
     }
   }
@@ -148,8 +148,8 @@ claude mcp list
       "command": "node",
       "args": ["/absolute/path/to/agent-knowledge/dist/index.js"],
       "env": {
-        "KNOWLEDGE_MEMORY_DIR": "/home/you/agent-knowledge",
-        "KNOWLEDGE_PORT": "3423"
+        "AGENT_KNOWLEDGE_MEMORY_DIR": "/home/you/agent-knowledge",
+        "AGENT_KNOWLEDGE_PORT": "3423"
       }
     }
   }
@@ -419,34 +419,34 @@ Architecture notes, deployment info, etc.
 
 ## Environment Variables
 
-| Variable                                            | Default             | Description                                                    |
-| --------------------------------------------------- | ------------------- | -------------------------------------------------------------- |
-| `KNOWLEDGE_MEMORY_DIR`                              | `~/agent-knowledge` | Path to git-synced knowledge base                              |
-| `KNOWLEDGE_DATA_DIR`                                | `~/.claude`         | Primary session data directory (Claude Code JSONL)             |
-| `EXTRA_SESSION_ROOTS`                               | --                  | Additional session directories, comma-separated                |
-| `OPENCODE_DATA_DIR`                                 | (platform default)  | Override OpenCode data dir (default `~/.local/share/opencode`) |
-| `KNOWLEDGE_PORT`                                    | `3423`              | Dashboard HTTP/WebSocket port                                  |
-| `KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider (local, openai, claude, gemini)             |
-| `KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.5`               | Blend weight for semantic vs TF-IDF search (0-1)               |
-| `KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | —                   | Idle timeout for embedding worker (ms)                         |
-| `KNOWLEDGE_EMBEDDING_THREADS`                       | —                   | Number of ONNX threads for local embeddings                    |
-| `KNOWLEDGE_EMBEDDING_MODEL`                         | —                   | Model name for embedding provider                              |
-| `KNOWLEDGE_GIT_URL`                                 | —                   | Remote git URL for knowledge base sync                         |
-| `KNOWLEDGE_AUTO_DISTILL`                            | —                   | Enable auto-distillation of sessions (true/false)              |
-| `KNOWLEDGE_OPENAI_API_KEY` / `OPENAI_API_KEY`       | —                   | API key for OpenAI embeddings                                  |
-| `KNOWLEDGE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` | —                   | API key for Claude/Voyage embeddings                           |
-| `KNOWLEDGE_GEMINI_API_KEY` / `GEMINI_API_KEY`       | —                   | API key for Gemini embeddings                                  |
+| Variable                                                  | Default             | Description                                                      |
+| --------------------------------------------------------- | ------------------- | ---------------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`                              | `~/agent-knowledge` | Path to git-synced knowledge base                                |
+| `AGENT_KNOWLEDGE_DATA_DIR`                                | (platform config)   | Override primary host data root (adapters auto-detect otherwise) |
+| `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS`                     | --                  | Additional session directories, comma-separated                  |
+| `OPENCODE_DATA_DIR`                                       | (platform default)  | Override OpenCode data dir (default `~/.local/share/opencode`)   |
+| `AGENT_KNOWLEDGE_PORT`                                    | `3423`              | Dashboard HTTP/WebSocket port                                    |
+| `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider (local, openai, claude, gemini)               |
+| `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.5`               | Blend weight for semantic vs TF-IDF search (0-1)                 |
+| `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | —                   | Idle timeout for embedding worker (ms)                           |
+| `AGENT_KNOWLEDGE_EMBEDDING_THREADS`                       | —                   | Number of ONNX threads for local embeddings                      |
+| `AGENT_KNOWLEDGE_EMBEDDING_MODEL`                         | —                   | Model name for embedding provider                                |
+| `AGENT_KNOWLEDGE_GIT_URL`                                 | —                   | Remote git URL for knowledge base sync                           |
+| `AGENT_KNOWLEDGE_AUTO_DISTILL`                            | —                   | Enable auto-distillation of sessions (true/false)                |
+| `AGENT_KNOWLEDGE_OPENAI_API_KEY` / `OPENAI_API_KEY`       | —                   | API key for OpenAI embeddings                                    |
+| `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` | —                   | API key for Claude/Voyage embeddings                             |
+| `AGENT_KNOWLEDGE_GEMINI_API_KEY` / `GEMINI_API_KEY`       | —                   | API key for Gemini embeddings                                    |
 
 Set in your shell profile or pass via MCP config:
 
 ```bash
-export KNOWLEDGE_MEMORY_DIR="$HOME/agent-knowledge"
+export AGENT_KNOWLEDGE_MEMORY_DIR="$HOME/agent-knowledge"
 ```
 
 On Windows (PowerShell):
 
 ```powershell
-$env:KNOWLEDGE_MEMORY_DIR = "$env:USERPROFILE\agent-knowledge"
+$env:AGENT_KNOWLEDGE_MEMORY_DIR = "$env:USERPROFILE\agent-knowledge"
 ```
 
 ---
@@ -481,21 +481,21 @@ cd ~/agent-knowledge && git pull && git push  # Should work without prompts
 
 agent-knowledge auto-discovers sessions from all major AI coding assistants. If a tool is installed on your machine, its sessions appear automatically in search results and the dashboard Sessions tab.
 
-| Tool             | Format         | Auto-detected path                                              | Override              |
-| ---------------- | -------------- | --------------------------------------------------------------- | --------------------- |
-| **Claude Code**  | JSONL          | `$KNOWLEDGE_DATA_DIR/projects/`                                 | `KNOWLEDGE_DATA_DIR`  |
-| **Cursor**       | JSONL          | `~/.cursor/projects/*/agent-transcripts/`                       | `EXTRA_SESSION_ROOTS` |
-| **OpenCode**     | SQLite         | `~/.local/share/opencode/opencode.db`                           | `OPENCODE_DATA_DIR`   |
-| **Cline**        | JSON           | VS Code globalStorage `saoudrizwan.claude-dev/tasks/`           | --                    |
-| **Continue.dev** | JSON           | `~/.continue/sessions/`                                         | --                    |
-| **Aider**        | Markdown/JSONL | `.aider.chat.history.md` / `.aider.llm.history` in project dirs | --                    |
+| Tool             | Format         | Auto-detected path                                              | Override                              |
+| ---------------- | -------------- | --------------------------------------------------------------- | ------------------------------------- |
+| **Claude Code**  | JSONL          | `$AGENT_KNOWLEDGE_DATA_DIR/projects/`                           | `AGENT_KNOWLEDGE_DATA_DIR`            |
+| **Cursor**       | JSONL          | `~/.cursor/projects/*/agent-transcripts/`                       | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` |
+| **OpenCode**     | SQLite         | `~/.local/share/opencode/opencode.db`                           | `OPENCODE_DATA_DIR`                   |
+| **Cline**        | JSON           | VS Code globalStorage `saoudrizwan.claude-dev/tasks/`           | --                                    |
+| **Continue.dev** | JSON           | `~/.continue/sessions/`                                         | --                                    |
+| **Aider**        | Markdown/JSONL | `.aider.chat.history.md` / `.aider.llm.history` in project dirs | --                                    |
 
 ### Adding extra session directories
 
-Use the `EXTRA_SESSION_ROOTS` environment variable to add session directories that are not auto-detected:
+Use the `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` environment variable to add session directories that are not auto-detected:
 
 ```bash
-export EXTRA_SESSION_ROOTS="/path/to/custom/sessions,/another/path"
+export AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS="/path/to/custom/sessions,/another/path"
 ```
 
 Each path is scanned for JSONL files or Cursor-style `agent-transcripts/` subdirectories.
@@ -518,7 +518,7 @@ netstat -ano | findstr :3423   # Windows
 lsof -i :3423                  # Linux/macOS
 
 # Use a different port
-export KNOWLEDGE_PORT=3424
+export AGENT_KNOWLEDGE_PORT=3424
 ```
 
 ### Git authentication failures
@@ -563,7 +563,7 @@ ls ~/.continue/sessions/
 ls ~/projects/*/.aider.chat.history.md
 ```
 
-If your session data is in a non-standard location, use `EXTRA_SESSION_ROOTS` to point to it.
+If your session data is in a non-standard location, use `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` to point to it.
 
 ## Client Comparison
 

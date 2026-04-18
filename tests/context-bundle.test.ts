@@ -90,25 +90,25 @@ function seedTinyKnowledge(dir: string): void {
 
 let memoryDir: string;
 let dataDir: string;
-const prevMem = process.env.KNOWLEDGE_MEMORY_DIR;
-const prevData = process.env.KNOWLEDGE_DATA_DIR;
-const prevAutoDistill = process.env.KNOWLEDGE_AUTO_DISTILL;
+const prevMem = process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+const prevData = process.env.AGENT_KNOWLEDGE_DATA_DIR;
+const prevAutoDistill = process.env.AGENT_KNOWLEDGE_AUTO_DISTILL;
 
 beforeEach(() => {
   memoryDir = makeTmpMemoryDir();
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ak-ctx-bundle-data-'));
-  process.env.KNOWLEDGE_MEMORY_DIR = memoryDir;
-  process.env.KNOWLEDGE_DATA_DIR = dataDir;
-  process.env.KNOWLEDGE_AUTO_DISTILL = 'false';
+  process.env.AGENT_KNOWLEDGE_MEMORY_DIR = memoryDir;
+  process.env.AGENT_KNOWLEDGE_DATA_DIR = dataDir;
+  process.env.AGENT_KNOWLEDGE_AUTO_DISTILL = 'false';
 });
 
 afterEach(() => {
-  if (prevMem === undefined) delete process.env.KNOWLEDGE_MEMORY_DIR;
-  else process.env.KNOWLEDGE_MEMORY_DIR = prevMem;
-  if (prevData === undefined) delete process.env.KNOWLEDGE_DATA_DIR;
-  else process.env.KNOWLEDGE_DATA_DIR = prevData;
-  if (prevAutoDistill === undefined) delete process.env.KNOWLEDGE_AUTO_DISTILL;
-  else process.env.KNOWLEDGE_AUTO_DISTILL = prevAutoDistill;
+  if (prevMem === undefined) delete process.env.AGENT_KNOWLEDGE_MEMORY_DIR;
+  else process.env.AGENT_KNOWLEDGE_MEMORY_DIR = prevMem;
+  if (prevData === undefined) delete process.env.AGENT_KNOWLEDGE_DATA_DIR;
+  else process.env.AGENT_KNOWLEDGE_DATA_DIR = prevData;
+  if (prevAutoDistill === undefined) delete process.env.AGENT_KNOWLEDGE_AUTO_DISTILL;
+  else process.env.AGENT_KNOWLEDGE_AUTO_DISTILL = prevAutoDistill;
   try {
     fs.rmSync(memoryDir, { recursive: true, force: true });
   } catch {

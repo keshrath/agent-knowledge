@@ -230,7 +230,19 @@ finalScore = baseRelevance * 0.5^(daysSinceLastAccess / 90) * maturityMultiplier
 | `established` | 5-19     | 1.0x       |
 | `proven`      | 20+      | 1.5x       |
 
-Access count increments on `knowledge { action: "read" }`. Maturity transitions happen automatically when thresholds are crossed. Search results from `knowledge_search` apply the decay formula to blend relevance with freshness and confidence.
+Access count increments on every path that actually feeds a knowledge entry into the agent's context: `knowledge { action: "read" }`, the session-start `wakeup` bundle (every entry packed in bumps access), and every `knowledge_search` hit on a knowledge entry. Sessions hits don't bump. Maturity transitions happen automatically when thresholds are crossed. Search results from `knowledge_search` apply the decay formula to blend relevance with freshness and confidence.
+
+### freshness.ts (v1.8.1)
+
+Automatic staleness detector. For each entry, extracts the file paths it mentions and cross-references them against `filesModified` in recent session summaries; an entry whose mentioned file was modified AFTER the entry's body mtime is a candidate.
+
+Precision layer: extracts identifiers the entry quotes (inline backticks + fenced blocks, strict-identifier shape, ≥3 chars) and checks whether they still appear in the touched files. Confidence multiplies by `0.3` when every named symbol is still present (entry's concrete claims likely hold), linearly scales for partial matches, keeps full weight when all named symbols are missing. Entries that quote no verifiable identifiers fall through with `symbol_evidence: "not_applicable"`.
+
+Entries with `evergreen: true` are exempt from the whole pass.
+
+### query-log.ts (v1.8.1)
+
+Lightweight `query_log` table inside `knowledge-scores.db`. Every `knowledge_search` call is logged with `{query, project, results_count, created_at}`; obvious-secret patterns (API keys, JWTs, bearer tokens, `.env`-style assignments) are scrubbed via `scrubContent` before insert. `knowledge_analyze(action: "search_gaps")` groups zero-result queries by token-Jaccard similarity (default `0.35`) and returns them ranked by frequency — the strongest signal for "what entries should I write next?".
 
 ## Memory Consolidation
 
@@ -295,9 +307,9 @@ The `edges` table has an additional `origin TEXT NOT NULL DEFAULT 'manual'` colu
 
 Sessions are read from multiple AI coding tools through two mechanisms:
 
-1. **Direct parsing** -- Claude Code and Cursor sessions use JSONL files read directly by `parser.ts`. Claude Code sessions come from the primary data directory (`$KNOWLEDGE_DATA_DIR/projects/`). Cursor sessions are auto-discovered from `~/.cursor/projects/*/agent-transcripts/`.
+1. **Direct parsing** -- JSONL-based hosts (Claude Code, Cursor, Codex CLI, Continue.dev) are read directly by `parser.ts`. The adapter registry probes each known host root under `~/` (`.claude/projects/`, `.cursor/projects/`, `.codex/projects/`, `.aider/…`, `.continue/projects/`) and merges them into the session index. `AGENT_KNOWLEDGE_DATA_DIR` overrides the primary root; `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` adds more.
 
-2. **Adapter dispatch** -- Other tools (OpenCode, Cline, Continue.dev, Aider) use the pluggable adapter system in `adapters/`. When `parseSessionFile()` receives a virtual descriptor (e.g. `opencode://session:abc`), it dispatches to the matching adapter.
+2. **Adapter dispatch** -- Tools with custom storage (OpenCode SQLite, Cline VS Code global storage, Aider markdown/JSONL hybrid) go through the pluggable adapter system in `adapters/`. When `parseSessionFile()` receives a virtual descriptor (e.g. `opencode://session:abc`), it dispatches to the matching adapter.
 
 ```
 parseSessionFile(path)

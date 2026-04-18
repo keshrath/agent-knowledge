@@ -9,15 +9,15 @@ describe('getEmbeddingConfig', () => {
   });
 
   it('defaults to local provider when no env vars set', async () => {
-    delete process.env.KNOWLEDGE_EMBEDDING_PROVIDER;
-    delete process.env.KNOWLEDGE_EMBEDDING_ALPHA;
-    delete process.env.KNOWLEDGE_OPENAI_API_KEY;
+    delete process.env.AGENT_KNOWLEDGE_EMBEDDING_PROVIDER;
+    delete process.env.AGENT_KNOWLEDGE_EMBEDDING_ALPHA;
+    delete process.env.AGENT_KNOWLEDGE_OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.KNOWLEDGE_ANTHROPIC_API_KEY;
+    delete process.env.AGENT_KNOWLEDGE_ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.KNOWLEDGE_GEMINI_API_KEY;
+    delete process.env.AGENT_KNOWLEDGE_GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
-    delete process.env.KNOWLEDGE_EMBEDDING_MODEL;
+    delete process.env.AGENT_KNOWLEDGE_EMBEDDING_MODEL;
 
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
@@ -42,59 +42,59 @@ describe('getEmbeddingConfig', () => {
     });
   });
 
-  it('reads provider from KNOWLEDGE_EMBEDDING_PROVIDER', async () => {
-    process.env.KNOWLEDGE_EMBEDDING_PROVIDER = 'openai';
+  it('reads provider from AGENT_KNOWLEDGE_EMBEDDING_PROVIDER', async () => {
+    process.env.AGENT_KNOWLEDGE_EMBEDDING_PROVIDER = 'openai';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.provider).toBe('openai');
   });
 
-  it('reads alpha from KNOWLEDGE_EMBEDDING_ALPHA', async () => {
-    process.env.KNOWLEDGE_EMBEDDING_ALPHA = '0.7';
+  it('reads alpha from AGENT_KNOWLEDGE_EMBEDDING_ALPHA', async () => {
+    process.env.AGENT_KNOWLEDGE_EMBEDDING_ALPHA = '0.7';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.alpha).toBeCloseTo(0.7);
   });
 
-  it('reads openai key from KNOWLEDGE_OPENAI_API_KEY', async () => {
-    process.env.KNOWLEDGE_OPENAI_API_KEY = 'sk-test-123';
+  it('reads openai key from AGENT_KNOWLEDGE_OPENAI_API_KEY', async () => {
+    process.env.AGENT_KNOWLEDGE_OPENAI_API_KEY = 'sk-test-123';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.openaiApiKey).toBe('sk-test-123');
   });
 
-  it('falls back to OPENAI_API_KEY if KNOWLEDGE_OPENAI_API_KEY not set', async () => {
-    delete process.env.KNOWLEDGE_OPENAI_API_KEY;
+  it('falls back to OPENAI_API_KEY if AGENT_KNOWLEDGE_OPENAI_API_KEY not set', async () => {
+    delete process.env.AGENT_KNOWLEDGE_OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'sk-fallback';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.openaiApiKey).toBe('sk-fallback');
   });
 
-  it('reads claude key from KNOWLEDGE_ANTHROPIC_API_KEY', async () => {
-    process.env.KNOWLEDGE_ANTHROPIC_API_KEY = 'sk-ant-test';
+  it('reads claude key from AGENT_KNOWLEDGE_ANTHROPIC_API_KEY', async () => {
+    process.env.AGENT_KNOWLEDGE_ANTHROPIC_API_KEY = 'sk-ant-test';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.anthropicApiKey).toBe('sk-ant-test');
   });
 
-  it('falls back to ANTHROPIC_API_KEY if KNOWLEDGE_ANTHROPIC_API_KEY not set', async () => {
-    delete process.env.KNOWLEDGE_ANTHROPIC_API_KEY;
+  it('falls back to ANTHROPIC_API_KEY if AGENT_KNOWLEDGE_ANTHROPIC_API_KEY not set', async () => {
+    delete process.env.AGENT_KNOWLEDGE_ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'sk-ant-fallback';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.anthropicApiKey).toBe('sk-ant-fallback');
   });
 
-  it('reads gemini key from KNOWLEDGE_GEMINI_API_KEY', async () => {
-    process.env.KNOWLEDGE_GEMINI_API_KEY = 'AIza-test';
+  it('reads gemini key from AGENT_KNOWLEDGE_GEMINI_API_KEY', async () => {
+    process.env.AGENT_KNOWLEDGE_GEMINI_API_KEY = 'AIza-test';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.geminiApiKey).toBe('AIza-test');
   });
 
-  it('reads model override from KNOWLEDGE_EMBEDDING_MODEL', async () => {
-    process.env.KNOWLEDGE_EMBEDDING_MODEL = 'custom-model-v2';
+  it('reads model override from AGENT_KNOWLEDGE_EMBEDDING_MODEL', async () => {
+    process.env.AGENT_KNOWLEDGE_EMBEDDING_MODEL = 'custom-model-v2';
     const { getEmbeddingConfig } = await import('../src/embeddings/types.js');
     const config = getEmbeddingConfig();
     expect(config.modelOverride).toBe('custom-model-v2');

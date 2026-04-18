@@ -373,13 +373,13 @@ describe('getProjectDirs — extra session roots', () => {
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
-    originalEnv = process.env.EXTRA_SESSION_ROOTS;
+    originalEnv = process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS;
   });
   afterEach(() => {
     if (originalEnv === undefined) {
-      delete process.env.EXTRA_SESSION_ROOTS;
+      delete process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS;
     } else {
-      process.env.EXTRA_SESSION_ROOTS = originalEnv;
+      process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = originalEnv;
     }
     cleanup(tmpDir);
     vi.restoreAllMocks();
@@ -390,7 +390,7 @@ describe('getProjectDirs — extra session roots', () => {
     fs.mkdirSync(path.join(ws, 'agent-transcripts'), { recursive: true });
     fs.writeFileSync(path.join(ws, 'agent-transcripts', 'sess1.jsonl'), '{}');
 
-    process.env.EXTRA_SESSION_ROOTS = tmpDir;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = tmpDir;
     const dirs = getProjectDirs();
     const cursor = dirs.find((d) => d.name === 'cursor-C--Users-Foo-myproject');
     expect(cursor).toBeDefined();
@@ -404,7 +404,7 @@ describe('getProjectDirs — extra session roots', () => {
       fs.writeFileSync(path.join(ws, 'agent-transcripts', 'sess.jsonl'), '{}');
     }
 
-    process.env.EXTRA_SESSION_ROOTS = tmpDir;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = tmpDir;
     const dirs = getProjectDirs();
     expect(dirs.find((d) => d.name === 'cursor-ws-a')).toBeDefined();
     expect(dirs.find((d) => d.name === 'cursor-ws-b')).toBeDefined();
@@ -415,7 +415,7 @@ describe('getProjectDirs — extra session roots', () => {
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, 'session.jsonl'), '{}');
 
-    process.env.EXTRA_SESSION_ROOTS = tmpDir;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = tmpDir;
     const dirs = getProjectDirs();
     const found = dirs.find((d) => d.name === 'my-editor-project');
     expect(found).toBeDefined();
@@ -427,7 +427,7 @@ describe('getProjectDirs — extra session roots', () => {
     fs.mkdirSync(flatRoot, { recursive: true });
     fs.writeFileSync(path.join(flatRoot, 'session1.jsonl'), '{}');
 
-    process.env.EXTRA_SESSION_ROOTS = flatRoot;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = flatRoot;
     const dirs = getProjectDirs();
     const found = dirs.find((d) => d.name === 'flat-sessions');
     expect(found).toBeDefined();
@@ -435,11 +435,11 @@ describe('getProjectDirs — extra session roots', () => {
   });
 
   it('skips non-existent extra roots gracefully', () => {
-    process.env.EXTRA_SESSION_ROOTS = path.join(tmpDir, 'nonexistent');
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = path.join(tmpDir, 'nonexistent');
     expect(() => getProjectDirs()).not.toThrow();
   });
 
-  it('supports comma-separated EXTRA_SESSION_ROOTS', () => {
+  it('supports comma-separated AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS', () => {
     const rootA = path.join(tmpDir, 'rootA');
     const rootB = path.join(tmpDir, 'rootB');
     fs.mkdirSync(rootA, { recursive: true });
@@ -447,7 +447,7 @@ describe('getProjectDirs — extra session roots', () => {
     fs.writeFileSync(path.join(rootA, 'a.jsonl'), '{}');
     fs.writeFileSync(path.join(rootB, 'b.jsonl'), '{}');
 
-    process.env.EXTRA_SESSION_ROOTS = `${rootA}, ${rootB}`;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = `${rootA}, ${rootB}`;
     const dirs = getProjectDirs();
     expect(dirs.find((d) => d.name === 'rootA')).toBeDefined();
     expect(dirs.find((d) => d.name === 'rootB')).toBeDefined();
@@ -458,7 +458,7 @@ describe('getProjectDirs — extra session roots', () => {
     fs.mkdirSync(emptyWs, { recursive: true });
     fs.writeFileSync(path.join(emptyWs, 'readme.txt'), 'no sessions here');
 
-    process.env.EXTRA_SESSION_ROOTS = tmpDir;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = tmpDir;
     const dirs = getProjectDirs();
     const found = dirs.find((d) => d.name.includes('empty-workspace'));
     expect(found).toBeUndefined();
@@ -469,7 +469,7 @@ describe('getProjectDirs — extra session roots', () => {
     fs.mkdirSync(path.join(ws, 'agent-transcripts'), { recursive: true });
     fs.writeFileSync(path.join(ws, 'agent-transcripts', 's.jsonl'), '{}');
 
-    process.env.EXTRA_SESSION_ROOTS = tmpDir;
+    process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS = tmpDir;
     const dirs = getProjectDirs();
     const cursorFound = dirs.find((d) => d.name === 'cursor-cursor-ws');
     expect(cursorFound).toBeDefined();

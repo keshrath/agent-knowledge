@@ -88,7 +88,7 @@ function slugify(input) {
 }
 
 function memoryDir() {
-  return process.env.KNOWLEDGE_MEMORY_DIR || join(homedir(), 'agent-knowledge');
+  return process.env.AGENT_KNOWLEDGE_MEMORY_DIR || join(homedir(), 'agent-knowledge');
 }
 
 async function dumpSummaryToDisk({ sessionId, event, cwd, projectSlug }) {

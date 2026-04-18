@@ -80,17 +80,19 @@ export function savePersistedConfig(updates: Partial<PersistedConfig>): Persiste
 
 export function getConfig(): KnowledgeConfig {
   const home = homedir();
-  // KNOWLEDGE_DATA_DIR is optional — defaults to platform config dir.
-  const dataDir = process.env.KNOWLEDGE_DATA_DIR || getConfigDir();
+  // Primary host data root override — defaults to the platform config dir
+  // when unset. Most deployments leave it unset and rely on the adapter
+  // registry's multi-host auto-detection instead.
+  const dataDir = process.env.AGENT_KNOWLEDGE_DATA_DIR || getConfigDir();
   const persisted = loadPersistedConfig();
 
   const memoryDir =
-    process.env.KNOWLEDGE_MEMORY_DIR || persisted.memoryDir || join(home, 'agent-knowledge');
+    process.env.AGENT_KNOWLEDGE_MEMORY_DIR || persisted.memoryDir || join(home, 'agent-knowledge');
   const sessionsDir = join(dataDir, 'projects');
 
   // Extra session roots: from env var (comma-separated) + auto-detected editors
   const extraSessionRoots: string[] = [];
-  const envRoots = process.env.EXTRA_SESSION_ROOTS;
+  const envRoots = process.env.AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS;
   if (envRoots) {
     for (const r of envRoots.split(',')) {
       const trimmed = r.trim();
@@ -114,20 +116,20 @@ export function getConfig(): KnowledgeConfig {
   }
 
   const embeddingProvider =
-    (process.env.KNOWLEDGE_EMBEDDING_PROVIDER as ProviderName) ||
+    (process.env.AGENT_KNOWLEDGE_EMBEDDING_PROVIDER as ProviderName) ||
     (persisted.embeddingProvider as ProviderName) ||
     'local';
   const embeddingAlpha = parseFloat(
-    process.env.KNOWLEDGE_EMBEDDING_ALPHA || String(persisted.embeddingAlpha ?? 0.3),
+    process.env.AGENT_KNOWLEDGE_EMBEDDING_ALPHA || String(persisted.embeddingAlpha ?? 0.3),
   );
-  const gitUrl = process.env.KNOWLEDGE_GIT_URL || persisted.gitUrl || undefined;
-  const autoDistillEnv = process.env.KNOWLEDGE_AUTO_DISTILL;
+  const gitUrl = process.env.AGENT_KNOWLEDGE_GIT_URL || persisted.gitUrl || undefined;
+  const autoDistillEnv = process.env.AGENT_KNOWLEDGE_AUTO_DISTILL;
   const autoDistill =
     autoDistillEnv !== undefined
       ? autoDistillEnv.toLowerCase() !== 'false'
       : (persisted.autoDistill ?? true);
 
-  const indexVerbatimEnv = process.env.KNOWLEDGE_INDEX_VERBATIM;
+  const indexVerbatimEnv = process.env.AGENT_KNOWLEDGE_INDEX_VERBATIM;
   const indexVerbatim =
     indexVerbatimEnv !== undefined
       ? indexVerbatimEnv.toLowerCase() !== 'false'

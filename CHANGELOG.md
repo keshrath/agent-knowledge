@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.9.0 (2026-04-18) — env var naming cleanup (**breaking**)
+
+Every env var is now under the canonical `AGENT_KNOWLEDGE_*` prefix per the repo-wide Genericity rule (`AGENT_<NAME>_<RESOURCE>`). The old `KNOWLEDGE_*` prefix and the unscoped `EXTRA_SESSION_ROOTS` are gone — no deprecation shim, no startup warning, just renamed. README and docs table rewritten so no host name (`Claude Code`, `~/.claude`) leaks into descriptions — the adapter registry already auto-detects `.claude`, `.cursor`, `.codex`, `.aider`, `.continue`, and OpenCode without configuration.
+
+### Breaking changes
+
+All renames are mechanical — rename the env var, nothing else:
+
+| Old                                | New                                      |
+| ---------------------------------- | ---------------------------------------- |
+| `KNOWLEDGE_MEMORY_DIR`             | `AGENT_KNOWLEDGE_MEMORY_DIR`             |
+| `KNOWLEDGE_DATA_DIR`               | `AGENT_KNOWLEDGE_DATA_DIR`               |
+| `KNOWLEDGE_GIT_URL`                | `AGENT_KNOWLEDGE_GIT_URL`                |
+| `KNOWLEDGE_AUTO_DISTILL`           | `AGENT_KNOWLEDGE_AUTO_DISTILL`           |
+| `KNOWLEDGE_INDEX_VERBATIM`         | `AGENT_KNOWLEDGE_INDEX_VERBATIM`         |
+| `KNOWLEDGE_PORT`                   | `AGENT_KNOWLEDGE_PORT`                   |
+| `KNOWLEDGE_EMBEDDING_PROVIDER`     | `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`     |
+| `KNOWLEDGE_EMBEDDING_ALPHA`        | `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`        |
+| `KNOWLEDGE_EMBEDDING_MODEL`        | `AGENT_KNOWLEDGE_EMBEDDING_MODEL`        |
+| `KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT` | `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT` |
+| `KNOWLEDGE_EMBEDDING_THREADS`      | `AGENT_KNOWLEDGE_EMBEDDING_THREADS`      |
+| `KNOWLEDGE_OPENAI_API_KEY`         | `AGENT_KNOWLEDGE_OPENAI_API_KEY`         |
+| `KNOWLEDGE_ANTHROPIC_API_KEY`      | `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY`      |
+| `KNOWLEDGE_GEMINI_API_KEY`         | `AGENT_KNOWLEDGE_GEMINI_API_KEY`         |
+| `EXTRA_SESSION_ROOTS`              | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS`    |
+
+Standard third-party keys still work as fallbacks when the scoped form is unset: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`. `OPENCODE_DATA_DIR` (OpenCode's own env) is unchanged — our adapter honors it as-is.
+
+### Documented
+
+- `AGENT_KNOWLEDGE_INDEX_VERBATIM`, `AGENT_KNOWLEDGE_EMBEDDING_THREADS`, `AGENT_KNOWLEDGE_EMBEDDING_MODEL` — existed but were missing from the README table.
+- `AGENT_KNOWLEDGE_AUTOWAKE`, `AGENT_KNOWLEDGE_WAKEUP_BUDGET`, `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`, `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`, `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS`, `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE` — hook env vars were in `docs/hooks.md` but not surfaced in the main README table. Fixed.
+
+### Fixed
+
+- README `AGENT_KNOWLEDGE_DATA_DIR` description no longer says "Claude Code JSONL files" — the adapter registry is multi-host by design and the description now reflects that.
+
 ## 1.8.1 (2026-04-18) — staleness signal + search-gap log + section-priority context + dashboard polish + access-tracking measurement fix
 
 Additive upgrades. Response shapes gain new optional fields (`freshness` on search hits, `evergreen`/`author`/`last_accessed` on `GET /api/knowledge` rows, three new fields on `StalenessSignal`) but no existing fields were removed or reshaped — strict consumers relying on unknown-field tolerance are unaffected. Every new behaviour is automatic or additive — no agent-proactive action required.

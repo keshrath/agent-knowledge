@@ -17,7 +17,7 @@ let _idleTimer: ReturnType<typeof setTimeout> | null = null;
 let _idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
 
 const _numThreads = parseInt(
-  process.env.KNOWLEDGE_EMBEDDING_THREADS ?? String(DEFAULT_NUM_THREADS),
+  process.env.AGENT_KNOWLEDGE_EMBEDDING_THREADS ?? String(DEFAULT_NUM_THREADS),
   10,
 );
 process.env.ONNX_NUM_THREADS = String(_numThreads);
