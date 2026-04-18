@@ -51,17 +51,17 @@ No configuration needed. Additional session roots can be added via the `AGENT_KN
 - **Host-agnostic session search** -- unified search across every major AI coding assistant (Claude Code, Cursor, Codex CLI, Aider, Continue.dev, Cline, OpenCode). No host name is baked into configuration — the adapter registry probes installed host roots at startup.
 - **Hybrid search** -- semantic vector similarity blended with TF-IDF keyword ranking
 - **Git-synced knowledge base** -- markdown vault with YAML frontmatter, auto commit and push on writes
-- **Automatic staleness detection (v1.8.1)** -- `knowledge_analyze(action: "stale_by_code_activity")` cross-references file paths mentioned in each entry body against `filesModified` in recent session summaries. Pairs with a symbol-presence precision layer: identifiers the entry quotes (inline backticks + fenced blocks) are checked in the touched file; if they still exist, confidence downweights ×0.3. Entries with `evergreen: true` are exempt.
-- **Search-gap tracking (v1.8.1)** -- `knowledge_analyze(action: "search_gaps")` surfaces zero-result queries over the last `since_days`, grouped by token-Jaccard similarity. The clearest signal for "what entries should I write next?".
-- **Section-priority context packer (v1.8.1)** -- `knowledge(action: "wakeup")` assembles a multi-section bundle (`identity` → `active_tasks` → `recent_decisions` → `known_gotchas` → `last_session_summary` → `top_weighted` → `semantic_fallback`) within a token budget. Unused section budget redistributes to later sections.
-- **Scored + gated promoter (v1.8)** -- session insights promoted via a 6-signal weighted scorer with three independent gates (`minScore`, `minRecallCount`, `minUniqueQueries`). Runs automatically in background, on demand via `knowledge_admin(action: "promote")`, or benchable offline via `npm run bench:promote`. Emits an auditable `.dreams/YYYY-MM-DD.md` diary every run. Replaces the regex-only distiller.
+- **Automatic staleness detection** -- `knowledge_analyze(action: "stale_by_code_activity")` cross-references file paths mentioned in each entry body against `filesModified` in recent session summaries. Pairs with a symbol-presence precision layer: identifiers the entry quotes (inline backticks + fenced blocks) are checked in the touched file; if they still exist, confidence downweights ×0.3. Entries with `evergreen: true` are exempt.
+- **Search-gap tracking** -- `knowledge_analyze(action: "search_gaps")` surfaces zero-result queries over the last `since_days`, grouped by token-Jaccard similarity. The clearest signal for "what entries should I write next?".
+- **Section-priority context packer** -- `knowledge(action: "wakeup")` assembles a multi-section bundle (`identity` → `active_tasks` → `recent_decisions` → `known_gotchas` → `last_session_summary` → `top_weighted` → `semantic_fallback`) within a token budget (default 800, override via `token_budget` or `AGENT_KNOWLEDGE_WAKEUP_BUDGET`). Unused section budget redistributes to later sections.
+- **Scored + gated promoter** -- session insights promoted via a 6-signal weighted scorer with three independent gates (`minScore`, `minRecallCount`, `minUniqueQueries`). Runs automatically in background, on demand via `knowledge_admin(action: "promote")`, or benchable offline via `npm run bench:promote`. Emits an auditable `.dreams/YYYY-MM-DD.md` diary every run.
 - **Pluggable adapter system** -- add support for new tools by implementing the `SessionAdapter` interface
 - **Embeddings** -- local (Hugging Face), OpenAI, Claude/Voyage, or Gemini providers
 - **Fuzzy matching** -- typo-tolerant search using Levenshtein distance
 - **6 search scopes** -- errors, plans, configs, tools, files, decisions
 - **6 MCP tools** -- consolidated action-based interface (`knowledge`, `knowledge_search`, `knowledge_session`, `knowledge_graph`, `knowledge_analyze`, `knowledge_admin`)
-- **Evergreen entries (v1.8)** -- `evergreen: true` in frontmatter exempts an entry from decay in ranking AND makes it append-only under promotion. Dashboard renders a push-pin badge on these cards.
-- **Author attribution (v1.8.1)** -- optional `author: <string>` frontmatter surfaces as a muted chip on each card.
+- **Evergreen entries** -- `evergreen: true` in frontmatter exempts an entry from decay in ranking AND makes it append-only under promotion. Dashboard renders a push-pin badge on these cards.
+- **Author attribution** -- optional `author: <string>` frontmatter surfaces as a muted chip on each card.
 - **Code graph resolution** -- `calls`, `imports`, `inherits` edge types for code structure; directed BFS traversal (`outbound`/`inbound`/`both`); `bulk_link` for efficient ingestion; `unlink_by_origin` for clearing stale code edges before re-ingest; `code:` prefixed node IDs distinguish code from knowledge
 - **Temporal knowledge graph** -- edges support `valid_from` / `valid_to` validity windows; `as_of` queries return point-in-time snapshots; `invalidate` action marks facts as ended without deleting them
 - **Hybrid scoring boosts** -- proper-noun and temporal-proximity boosts on top of TF-IDF + semantic blend, capped at +66.7%, short-circuit when no signals are present
@@ -81,8 +81,8 @@ No configuration needed. Additional session roots can be added via the `AGENT_KN
 - **Knowledge brief** — `knowledge_analyze(action: "brief")` returns a cached ~200 token summary (core concepts, active projects, recent decisions, stale and gap counts) for session-start orientation
 - **Edge provenance** — graph edges track `origin` (manual, auto-link, distill, reflect) so analysis can distinguish user judgment from automated heuristics
 - **Deterministic pre-extraction in distillation** — session summaries now include git commits, error patterns, URLs accessed, and packages changed extracted via regex from bash/tool output (no LLM cost)
-- **Freshness metadata on every search hit (v1.8.1)** — every knowledge result carries `freshness: { body_age_days, last_accessed, access_count, verified_at, verification_age_days, evergreen }`. Agent reads the trust signal and decides; we impose no policy demotion.
-- **Per-category decay windows (v1.8.1)** — the "Unused" filter and bytype chart honor per-category thresholds (projects 180d, people 365d, decisions 90d, workflows 60d, notes 30d) so identity-shaped content doesn't look stale just because it isn't re-read weekly.
+- **Freshness metadata on every search hit** — every knowledge result carries `freshness: { body_age_days, last_accessed, access_count, verified_at, verification_age_days, evergreen }`. Agent reads the trust signal and decides; we impose no policy demotion.
+- **Per-category decay windows** — the "Unused" filter and bytype chart honor per-category thresholds (projects 180d, people 365d, decisions 90d, workflows 60d, notes 30d) so identity-shaped content doesn't look stale just because it isn't re-read weekly.
 - **Lifecycle hooks** — `SessionStart` auto-wakeup + ingest-freshness check, `UserPromptSubmit` first-prompt targeted injection, `PreCompact` memory-flush nudge + distill, `SessionEnd` distill. Six hook scripts total, all fail-open, each toggleable via an `AGENT_KNOWLEDGE_*` env var. See [`docs/HOOKS.md`](docs/HOOKS.md).
 - **Replaces host auto-memory** — on hosts with a per-session memory system (Claude Code's `~/.claude/projects/*/memory/`, similar in other IDEs), route durable user facts and feedback to agent-knowledge instead. Auto-memory is machine-local and invisible to other machines; agent-knowledge is git-synced, cross-machine, searchable, and surfaces in wakeup. See the Claude Code integration note in [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md#persistent-memory--agent-knowledge-not-host-auto-memory).
 
@@ -163,10 +163,10 @@ Response shape: `{mode: "general" | "scoped", sessions, knowledge}`. Scoped mode
 
 Scopes: `errors`, `plans`, `configs`, `tools`, `files`, `decisions`, `all`.
 
-v1.8 search knobs:
+Search knobs:
 
 - `mmr: true` applies Maximal Marginal Relevance re-ranking (kills near-duplicate clusters in top-K). `mmr_lambda` 0-1, default 0.7.
-- `category_mode: "boost"` (default) gives matching-category entries a 1.25× score multiplier instead of dropping non-matches. Pass `"filter"` for legacy hard-filter behavior.
+- `category_mode: "boost"` (default) gives matching-category entries a 1.25× score multiplier instead of dropping non-matches. Pass `"filter"` for hard-filter behavior.
 - `explain: true` attaches `score_components: {bm25, decay, maturity, confidence, category_boost, mmr_penalty}` to every knowledge hit.
 
 ### Sessions
@@ -214,11 +214,11 @@ v1.8 search knobs:
 |                   | `rebuild_embeddings` | Re-embed all knowledge entries (useful on provider switch) | --                                                                                             |
 |                   | `prune_orphans`      | Delete embeddings for sessions no longer on disk           | `vacuum?`, `force_vacuum?`                                                                     |
 |                   | `vacuum`             | Reclaim free pages in the vector store                     | --                                                                                             |
-|                   | `promote`            | Scored + gated promoter (v1.8)                             | `promote_mode?` (`apply`\|`explain`), `min_score?`, `min_recall_count?`, `min_unique_queries?` |
+|                   | `promote`            | Scored + gated promoter                                    | `promote_mode?` (`apply`\|`explain`), `min_score?`, `min_recall_count?`, `min_unique_queries?` |
 
-### Scored promoter (v1.8)
+### Scored promoter
 
-Session insights no longer drop into the knowledge base via regex distillation. Instead, every project-level candidate is scored on six signals (relevance 0.30, frequency 0.24, query-diversity 0.15, recency 0.15, consolidation 0.10, conceptual-richness 0.06) and gated on `minScore ≥ 0.5`, `minRecallCount ≥ 2`, `minUniqueQueries ≥ 2`. All three gates must pass. Background auto-promotion is controlled by the same `auto_distill` config flag; invoke on demand with `knowledge_admin(action: "promote")`.
+Every project-level candidate is scored on six signals (relevance 0.30, frequency 0.24, query-diversity 0.15, recency 0.15, consolidation 0.10, conceptual-richness 0.06) and gated on `minScore ≥ 0.5`, `minRecallCount ≥ 2`, `minUniqueQueries ≥ 2`. All three gates must pass. Background auto-promotion is controlled by the same `auto_distill` config flag; invoke on demand with `knowledge_admin(action: "promote")`.
 
 - `promote_mode: "explain"` (default) — score + gate candidates, write diary, DO NOT touch the KB.
 - `promote_mode: "apply"` — promote candidates that pass, write diary, git-commit.
@@ -383,9 +383,11 @@ This enables HTTP-based writes from other services without an MCP connection.
 ## Testing
 
 ```bash
-npm test              # 352 tests across 20 files
+npm test              # 558 tests across 35 files
 npm run test:watch    # Watch mode
-npm run lint          # Type-check (tsc --noEmit)
+npm run lint          # ESLint on src/ and tests/
+npm run typecheck     # tsc --noEmit
+npm run check         # typecheck + lint + format + test
 ```
 
 ## Environment Variables
@@ -424,7 +426,7 @@ Project-scoped overrides win over the standard keys. Set either; the scoped form
 | `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | Claude / Voyage embeddings |
 | `AGENT_KNOWLEDGE_GEMINI_API_KEY`    | `GEMINI_API_KEY`    | Gemini embeddings          |
 
-### Hooks (v1.8 lifecycle integration)
+### Hooks
 
 | Variable                               | Default | Description                                                                                                                                               |
 | -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |

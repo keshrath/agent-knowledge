@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.3 (2026-04-19) — README showcase rewrite
+
+### Changed
+
+- **README no longer carries inline version markers** (`(v1.8)`, `(v1.8.1)`, `(v1.8 lifecycle integration)`). The feature list now describes the current state as a single coherent surface — version history lives in this CHANGELOG where it belongs. Moves the README from "changelog-in-bullet-points" to "how it works today".
+- **Section renames to match**: `### Scored promoter (v1.8)` → `### Scored promoter`, `### Hooks (v1.8 lifecycle integration)` → `### Hooks`, `v1.8 search knobs:` → `Search knobs:`.
+- **Wakeup bullet now names the token budget** — 800 default, overridable via `token_budget` param or `AGENT_KNOWLEDGE_WAKEUP_BUDGET` env var. The number was previously only in the env-var table.
+- **Testing block refreshed** — stale `352 tests across 20 files` replaced with the real `558 tests across 35 files`; added `typecheck` and `check` script references so the documented workflow matches what `npm run check` actually runs.
+
+### Tests
+
+558/558 passing. Docs + metadata only — no source changes.
+
 ## 1.9.2 (2026-04-19) — doc/setup drift cleanup + HOOKS.md rename
 
 ### Fixed

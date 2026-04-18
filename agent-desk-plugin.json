@@ -2,7 +2,7 @@
   "id": "agent-knowledge",
   "name": "Knowledge",
   "icon": "psychology",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "Knowledge base — entries, sessions, search, graph relationships",
   "ui": "./dist/ui/app.js",
   "css": "./dist/ui/styles.css",
