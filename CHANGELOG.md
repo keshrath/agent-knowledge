@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.9.4 (2026-04-19) — visible knowledge-hook feedback + L0-only SessionStart
+
+### Changed
+
+- **`scripts/hooks/first-prompt-inject.mjs` now emits a user-visible `systemMessage`** alongside the silent `additionalContext`. When the session's first real prompt triggers injection, the host renders a one-line summary like `knowledge: injected 4 hits (decisions/database-choice.md, sessions/odoo-sh/...md, +2 more)` in the transcript, so the user can see which entries the model received without having to diff context.
+- **`scripts/hooks/session-start.js` now auto-loads L0 identity only**, not the full L0+L1 wakeup pack. L1 top-weighted facts are covered by `first-prompt-inject.mjs`, which runs query-targeted search against the KB on the session's first real prompt — a better-matched slice than any query-agnostic pre-load. Effect: ~600 fewer tokens pre-loaded per session on average, no loss of context quality because `first-prompt-inject.mjs` fills the same budget one turn later with relevance-ranked content.
+- **`AGENT_KNOWLEDGE_WAKEUP_BUDGET` default changed from 800 → 200 tokens.** L0 identity is small; the legacy 800-token ceiling existed to accommodate the now-removed L1 pack. Users who want the full legacy L0+L1 injection can still call `knowledge(action="wakeup")` manually — the MCP tool is unchanged.
+- **SessionStart `systemMessage`** now always appends a status suffix so the user can tell the hook ran: `identity: 312 chars` when an `identity.md` is loaded, `identity: placeholder (no identity.md)` when only the default placeholder was emitted, or `autowake off · <source>` when disabled. Previously the suffix was suppressed on the "no identity.md" path, which was visually indistinguishable from the pre-v1.9.4 URL-only line.
+
+### Fixed
+
+- **`session-start.js` clears the `first-prompt-inject.mjs` marker on every SessionStart event.** Resumed sessions reuse the same `session_id`, so the marker from the prior run stayed on disk and the inject hook silently skipped the next user prompt. Now every `/exit`+resume (or `/clear`) re-arms query-targeted injection. When the marker is cleared, the SessionStart `systemMessage` appends `· inject rearmed`.
+
+### Added
+
+- **Identity onboarding.** When no `identity.md` (or `IDENTITY.md`) exists in the memory dir AND no `.identity-declined` opt-out marker is present, `session-start.js` injects a short instruction into `additionalContext` telling the agent to ask the user three questions (name/role, stack, projects) and save the answers via the host's `Write` tool directly into `~/agent-knowledge/identity.md`. No manual file creation; the agent drives the flow. If the user says "skip" / "not now", the agent writes `~/agent-knowledge/.identity-declined` and the nag stops. Delete that file to re-enable. The SessionStart `systemMessage` reports `identity: onboarding pending` or `identity: declined` accordingly.
+
+Neither change alters the model-facing MCP API. Fail-open behaviour unchanged: errors still produce a valid empty JSON response.
+
+### Tests
+
+563/563 passing. New assertions cover: `first-prompt-inject.mjs` `systemMessage` shape, `session-start.js` dashboard-URL line, identity-onboarding instruction when neither `identity.md` nor `.identity-declined` exist, opt-out path via `.identity-declined`, happy-path with an existing `identity.md`, and first-prompt-inject marker clear on resume. Existing hook tests only asserted `hookSpecificOutput`, which stays the same shape; the new `systemMessage` field is additive.
+
 ## 1.9.3 (2026-04-19) — README showcase rewrite
 
 ### Changed

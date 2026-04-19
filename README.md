@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
-[![Tests: 558 passing](https://img.shields.io/badge/Tests-558%20passing-brightgreen.svg)]()
+[![Tests: 563 passing](https://img.shields.io/badge/Tests-563%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
 [![LongMemEval R@5: 98.8%](https://img.shields.io/badge/LongMemEval%20R%405-98.8%25-brightgreen.svg)]()
 
@@ -383,7 +383,7 @@ This enables HTTP-based writes from other services without an MCP connection.
 ## Testing
 
 ```bash
-npm test              # 558 tests across 35 files
+npm test              # 563 tests across 35 files
 npm run test:watch    # Watch mode
 npm run lint          # ESLint on src/ and tests/
 npm run typecheck     # tsc --noEmit

@@ -95,6 +95,87 @@ describe('session-start.js', () => {
     const obj = json as { hookSpecificOutput?: { hookEventName?: string } };
     expect(obj.hookSpecificOutput?.hookEventName).toBe('SessionStart');
   });
+
+  it('emits user-visible systemMessage with dashboard URL', async () => {
+    const { json } = await runHook('session-start.js', {});
+    const obj = json as { systemMessage?: string };
+    expect(obj.systemMessage).toMatch(/^agent-knowledge: http:\/\/localhost:/);
+  });
+
+  it('emits identity-onboarding instruction when no identity.md AND no decline marker', async () => {
+    const kb = mkdtempSync(join(tmpdir(), 'agent-knowledge-sstart-onboard-'));
+    const { json } = await runHook(
+      'session-start.js',
+      {},
+      { env: { AGENT_KNOWLEDGE_MEMORY_DIR: kb } },
+    );
+    const obj = json as {
+      systemMessage?: string;
+      hookSpecificOutput?: { additionalContext?: string };
+    };
+    expect(obj.systemMessage).toContain('identity: onboarding pending');
+    const ctx = obj.hookSpecificOutput?.additionalContext ?? '';
+    expect(ctx).toContain('Identity onboarding');
+    expect(ctx).toContain('Name + primary role');
+    expect(ctx).toContain('~/agent-knowledge/.identity-declined');
+  });
+
+  it('skips onboarding when user has opted out via .identity-declined', async () => {
+    const kb = mkdtempSync(join(tmpdir(), 'agent-knowledge-sstart-declined-'));
+    writeFileSync(join(kb, '.identity-declined'), '', 'utf-8');
+    const { json } = await runHook(
+      'session-start.js',
+      {},
+      { env: { AGENT_KNOWLEDGE_MEMORY_DIR: kb } },
+    );
+    const obj = json as {
+      systemMessage?: string;
+      hookSpecificOutput?: { additionalContext?: string };
+    };
+    expect(obj.systemMessage).toContain('identity: declined');
+    const ctx = obj.hookSpecificOutput?.additionalContext ?? '';
+    expect(ctx).not.toContain('Identity onboarding');
+  });
+
+  it('skips onboarding when identity.md exists', async () => {
+    const kb = mkdtempSync(join(tmpdir(), 'agent-knowledge-sstart-hasid-'));
+    writeFileSync(join(kb, 'identity.md'), '# Identity\n\nJane Doe — staff engineer.\n', 'utf-8');
+    const { json } = await runHook(
+      'session-start.js',
+      {},
+      { env: { AGENT_KNOWLEDGE_MEMORY_DIR: kb } },
+    );
+    const obj = json as {
+      systemMessage?: string;
+      hookSpecificOutput?: { additionalContext?: string };
+    };
+    expect(obj.systemMessage).toMatch(/identity: \d+ chars/);
+    const ctx = obj.hookSpecificOutput?.additionalContext ?? '';
+    expect(ctx).not.toContain('Identity onboarding');
+  });
+
+  it('clears the first-prompt-inject marker for its session_id (resume re-arms)', async () => {
+    // v1.9.4 bug fix: resumed sessions reuse session_id, so the marker from
+    // the previous run stays on disk and first-prompt-inject silently skips.
+    // session-start must delete the marker so the next user prompt re-injects.
+    const dataDir = mkdtempSync(join(tmpdir(), 'agent-knowledge-sstart-marker-'));
+    const sid = 'sess-resume-rearm';
+    const markerDir = join(dataDir, '.first-prompt-seen');
+    mkdirSync(markerDir, { recursive: true });
+    writeFileSync(join(markerDir, sid), new Date().toISOString(), 'utf-8');
+
+    const { json } = await runHook(
+      'session-start.js',
+      { session_id: sid, source: 'resume' },
+      { env: { AGENT_KNOWLEDGE_DATA_DIR: dataDir } },
+    );
+    const obj = json as { systemMessage?: string };
+    expect(obj.systemMessage).toContain('inject rearmed');
+
+    // Marker file must actually be gone from disk.
+    const fs = await import('node:fs');
+    expect(fs.existsSync(join(markerDir, sid))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -264,11 +345,15 @@ describe('first-prompt-inject.mjs', () => {
     expect(code).toBe(0);
     const obj = json as {
       hookSpecificOutput?: { hookEventName?: string; additionalContext?: string };
+      systemMessage?: string;
     };
     expect(obj.hookSpecificOutput?.hookEventName).toBe('UserPromptSubmit');
     const ctx = obj.hookSpecificOutput?.additionalContext ?? '';
     expect(ctx).toContain('Knowledge — top hits');
     expect(ctx).toContain('decisions/database-choice.md');
+    // v1.9.4: user-visible one-liner alongside the model-facing context.
+    expect(obj.systemMessage).toMatch(/^knowledge: injected \d+ hit/);
+    expect(obj.systemMessage).toContain('decisions/database-choice.md');
   });
 
   it('respects AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET by dropping hits that would overflow', async () => {

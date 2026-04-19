@@ -38,7 +38,7 @@ import { homedir } from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-function emit(additionalContext) {
+function emit(additionalContext, systemMessage) {
   const payload = additionalContext
     ? {
         hookSpecificOutput: {
@@ -47,8 +47,20 @@ function emit(additionalContext) {
         },
       }
     : {};
+  if (systemMessage) payload.systemMessage = systemMessage;
   process.stdout.write(JSON.stringify(payload) + '\n');
   process.exit(0);
+}
+
+function summarizeHits(hits) {
+  if (!hits || hits.length === 0) return null;
+  const paths = hits
+    .map((h) => h.entry?.path)
+    .filter(Boolean)
+    .slice(0, 2);
+  const suffix = hits.length > paths.length ? `, +${hits.length - paths.length} more` : '';
+  const list = paths.length ? ` (${paths.join(', ')}${suffix})` : '';
+  return `knowledge: injected ${hits.length} hit${hits.length === 1 ? '' : 's'}${list}`;
 }
 
 function warn(msg) {
@@ -221,7 +233,7 @@ async function main() {
   const budgetChars = tokenBudget() * 4;
   const rendered = renderHits(hits, budgetChars);
   if (!rendered) return emit(null);
-  emit(rendered);
+  emit(rendered, summarizeHits(hits));
 }
 
 main().catch((err) => {
