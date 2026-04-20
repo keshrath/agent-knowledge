@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.5 (2026-04-20) — PreCompact nudge schema fix
+
+### Fixed
+
+- **`scripts/hooks/precompact-flush.mjs` now emits the memory-flush nudge as top-level `systemMessage` instead of `hookSpecificOutput.additionalContext`.** Claude Code's PreCompact hook schema only accepts `additionalContext` under `hookSpecificOutput` for `UserPromptSubmit` and `PostToolUse` events — PreCompact has no `additionalContext` shape, so the host was rejecting every response with `Hook JSON output validation failed — (root): Invalid input` and dropping the nudge on the floor. The disk-dump side-effect still ran (that's why the companion `precompact-distill.mjs` reported success), but the pre-compaction "save your context" reminder never reached the transcript. Switched to `systemMessage`, which is accepted for all event types and lands in the transcript ahead of the compacted summary, so the reminder still survives compaction.
+
+### Tests
+
+New assertions cover: (a) PreCompact nudge lands in `systemMessage` and nothing is emitted under `hookSpecificOutput`, (b) `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=0` suppresses the nudge entirely. Guards against regressing to the broken `hookSpecificOutput.additionalContext` shape.
+
 ## 1.9.4 (2026-04-19) — visible knowledge-hook feedback + L0-only SessionStart
 
 ### Changed

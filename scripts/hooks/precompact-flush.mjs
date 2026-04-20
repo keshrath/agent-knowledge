@@ -9,11 +9,14 @@
 //      later distillation/promotion has a durable anchor even if the host
 //      garbage-collects the transcript.
 //
-//   2. Inject a short "save-your-context" nudge into the host's PreCompact
-//      response (`hookSpecificOutput.additionalContext`). The compaction pass
-//      is about to summarize — anything important and unsaved should be
-//      written to the knowledge base NOW via `knowledge(action="write", …)`.
-//      Pre-compaction memory-flush primitive.
+//   2. Emit a short "save-your-context" nudge as a top-level `systemMessage`.
+//      The compaction pass is about to summarize — anything important and
+//      unsaved should be written to the knowledge base NOW via
+//      `knowledge(action="write", …)`. Pre-compaction memory-flush primitive.
+//      (PreCompact rejects `hookSpecificOutput.additionalContext` — only
+//      UserPromptSubmit/PostToolUse accept that shape — so the nudge rides
+//      in `systemMessage`, which lands in the transcript and survives
+//      compaction.)
 //
 // Disable the nudge by exporting AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=0 (the disk
 // dump still runs). Set AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=off to suppress both.
@@ -38,28 +41,14 @@ const nudgeEnabled = NUDGE_MODE !== '0' && NUDGE_MODE !== 'false' && NUDGE_MODE 
 const diskDumpEnabled = NUDGE_MODE !== 'off';
 
 const NUDGE_TEXT = [
-  '## PreCompact — memory-flush nudge',
-  '',
-  'The host is about to compact the conversation. Anything you learned this',
-  'turn that the next session will need MUST be written to the knowledge base',
-  'before the summary replaces the transcript. Use:',
-  '',
-  '  `knowledge(action="write", category="decisions"|"notes"|"workflows", filename=..., content=...)`',
-  '',
-  'Candidates worth a write: architectural decisions, non-obvious gotchas,',
-  'hard-won commands, people/ownership facts, project state. Skip transient',
-  'things (file diffs, TODO lists, in-flight plans — plan/task systems own those).',
-].join('\n');
+  'knowledge: PreCompact — flush durable facts to the KB before summary replaces the transcript.',
+  'Write architectural decisions, non-obvious gotchas, hard-won commands, people/ownership facts, project state via',
+  '`knowledge(action="write", category="decisions"|"notes"|"workflows", filename=..., content=...)`.',
+  'Skip transient things (file diffs, TODO lists, in-flight plans — plan/task systems own those).',
+].join(' ');
 
-function emitResult(additionalContext) {
-  const payload = additionalContext
-    ? {
-        hookSpecificOutput: {
-          hookEventName: 'PreCompact',
-          additionalContext,
-        },
-      }
-    : {};
+function emitResult(nudge) {
+  const payload = nudge ? { systemMessage: nudge } : {};
   process.stdout.write(JSON.stringify(payload) + '\n');
   process.exit(0);
 }

@@ -192,6 +192,34 @@ describe('precompact-flush.mjs', () => {
     const { code } = await runHook('precompact-flush.mjs', 'junk');
     expect(code).toBe(0);
   });
+
+  it('emits nudge as top-level systemMessage, not hookSpecificOutput.additionalContext', async () => {
+    // Claude Code's PreCompact schema only accepts systemMessage at the top
+    // level; hookSpecificOutput.additionalContext is UserPromptSubmit /
+    // PostToolUse only. Emitting the latter produces a validation error and
+    // the nudge is dropped. Guard against regression.
+    const { json } = await runHook('precompact-flush.mjs', {
+      session_id: 'sess-precompact-nudge',
+      hook_event_name: 'PreCompact',
+    });
+    const obj = json as {
+      systemMessage?: string;
+      hookSpecificOutput?: { additionalContext?: string };
+    };
+    expect(obj.systemMessage).toBeTruthy();
+    expect(obj.systemMessage).toContain('knowledge:');
+    expect(obj.hookSpecificOutput).toBeUndefined();
+  });
+
+  it('suppresses nudge when AGENT_KNOWLEDGE_PRECOMPACT_NUDGE=0', async () => {
+    const { json } = await runHook(
+      'precompact-flush.mjs',
+      { session_id: 'sess-nudge-off', hook_event_name: 'PreCompact' },
+      { env: { AGENT_KNOWLEDGE_PRECOMPACT_NUDGE: '0' } },
+    );
+    const obj = json as { systemMessage?: string };
+    expect(obj.systemMessage).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
