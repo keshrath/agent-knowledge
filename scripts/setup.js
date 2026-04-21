@@ -4,16 +4,21 @@
 // agent-knowledge setup script
 //
 // Configures an MCP-compatible AI agent to use agent-knowledge.
-// Currently supports: Claude Code (auto-detected via ~/.claude.json)
+// Supports: Claude Code (auto-detected via ~/.claude.json) and OpenCode
+// (auto-detected via ~/.config/opencode/opencode.json on Linux/macOS or
+// %APPDATA%\opencode\opencode.json on Windows).
 //
 // What it does:
 // - Builds the project if dist/ is missing
 // - Registers the MCP server in the agent's config
 // - Adds lifecycle hooks for Claude Code (SessionStart banner, PreCompact
 //   flush + distill, SessionEnd distill)
+// - Registers the opencode plugin ("agent-knowledge/opencode") in opencode.json
 // - Adds permission for mcp__agent-knowledge__* tools
 //
-// Usage: node scripts/setup.js [--agent claude|generic]
+// Usage: node scripts/setup.js [--host=claude|opencode|all|auto]
+//        node scripts/setup.js [--agent claude|generic]   # deprecated alias
+//        node scripts/setup.js --host=opencode --workspace=/path/to/project
 // =============================================================================
 
 import { readFileSync, writeFileSync, existsSync, statSync, cpSync, mkdirSync } from 'fs';
@@ -28,11 +33,42 @@ const HOME = homedir();
 const CLAUDE_JSON = join(HOME, '.claude.json');
 const SETTINGS_JSON = join(HOME, '.claude', 'settings.json');
 
-const AGENT_FLAG = process.argv.find((_a, i, arr) => arr[i - 1] === '--agent') ?? 'auto';
-const IS_CLAUDE = AGENT_FLAG === 'claude' || (AGENT_FLAG === 'auto' && existsSync(CLAUDE_JSON));
+// OpenCode global config path — per opencode docs / XDG on Linux/macOS,
+// %APPDATA%\opencode on Windows (APPDATA is always defined on supported Windows).
+const OPENCODE_GLOBAL_JSON =
+  process.platform === 'win32'
+    ? join(process.env.APPDATA || join(HOME, 'AppData', 'Roaming'), 'opencode', 'opencode.json')
+    : join(HOME, '.config', 'opencode', 'opencode.json');
+
+function argValue(name) {
+  const eqMatch = process.argv.find((a) => a.startsWith(`--${name}=`));
+  if (eqMatch) return eqMatch.slice(name.length + 3);
+  const idx = process.argv.findIndex((a) => a === `--${name}`);
+  if (idx !== -1 && idx + 1 < process.argv.length) return process.argv[idx + 1];
+  return undefined;
+}
+
+const HOST_FLAG = argValue('host') || argValue('agent') || 'auto';
+const WORKSPACE_FLAG = argValue('workspace');
+
+function hostSelected(name) {
+  if (HOST_FLAG === 'all') return true;
+  if (HOST_FLAG === 'auto') {
+    if (name === 'claude') return existsSync(CLAUDE_JSON);
+    if (name === 'opencode') return existsSync(OPENCODE_GLOBAL_JSON) || !!WORKSPACE_FLAG;
+    return false;
+  }
+  // Back-compat: `generic` from the old --agent flag means no host
+  if (HOST_FLAG === 'generic') return false;
+  return HOST_FLAG === name;
+}
+
+const IS_CLAUDE = hostSelected('claude');
+const IS_OPENCODE = hostSelected('opencode');
 
 console.log('agent-knowledge setup\n');
-console.log(`Agent type: ${IS_CLAUDE ? 'Claude Code' : 'Generic (manual MCP config)'}`);
+const active = [IS_CLAUDE && 'Claude Code', IS_OPENCODE && 'OpenCode'].filter(Boolean);
+console.log(`Hosts: ${active.length ? active.join(', ') : 'Generic (manual MCP config)'}`);
 
 // ---------------------------------------------------------------------------
 // Build if needed
@@ -64,7 +100,7 @@ if (IS_CLAUDE && existsSync(CLAUDE_JSON)) {
 
   writeFileSync(CLAUDE_JSON, JSON.stringify(config, null, 2));
   console.log(`  Added agent-knowledge MCP server → ${distPath}`);
-} else {
+} else if (!IS_OPENCODE) {
   console.log('  Add this to your MCP client config:');
   console.log('  {');
   console.log('    "mcpServers": {');
@@ -77,6 +113,67 @@ if (IS_CLAUDE && existsSync(CLAUDE_JSON)) {
 }
 
 // ---------------------------------------------------------------------------
+// Configure OpenCode
+// ---------------------------------------------------------------------------
+
+if (IS_OPENCODE) {
+  const targets = [];
+  if (WORKSPACE_FLAG) {
+    const workspacePath = resolve(WORKSPACE_FLAG);
+    const cfgPath = join(workspacePath, 'opencode.json');
+    targets.push({ label: `workspace: ${workspacePath}`, path: cfgPath });
+  } else if (existsSync(OPENCODE_GLOBAL_JSON)) {
+    targets.push({ label: 'global', path: OPENCODE_GLOBAL_JSON });
+  } else {
+    console.log(
+      `\nOpenCode: no opencode.json found at ${OPENCODE_GLOBAL_JSON}. Create it or pass --workspace=<path> to configure a project.`,
+    );
+  }
+
+  for (const target of targets) {
+    console.log(`\nConfiguring OpenCode (${target.label})...`);
+    let cfg = {};
+    if (existsSync(target.path)) {
+      try {
+        cfg = JSON.parse(readFileSync(target.path, 'utf-8')) || {};
+      } catch (err) {
+        console.log(`  Warning: could not parse ${target.path}: ${err.message}`);
+        continue;
+      }
+    } else {
+      mkdirSync(dirname(target.path), { recursive: true });
+      cfg = { $schema: 'https://opencode.ai/config.json' };
+    }
+
+    if (!cfg.mcp) cfg.mcp = {};
+    if (!cfg.mcp['agent-knowledge']) {
+      cfg.mcp['agent-knowledge'] = {
+        type: 'local',
+        command: ['node', distPath],
+        enabled: true,
+        timeout: 60000,
+      };
+      console.log('  Added mcp.agent-knowledge');
+    } else {
+      console.log('  mcp.agent-knowledge: already configured');
+    }
+
+    if (!Array.isArray(cfg.plugin)) cfg.plugin = [];
+    const pluginId = 'agent-knowledge/opencode';
+    const already = cfg.plugin.some((p) =>
+      typeof p === 'string' ? p === pluginId : Array.isArray(p) && p[0] === pluginId,
+    );
+    if (!already) {
+      cfg.plugin.push(pluginId);
+      console.log(`  Added plugin "${pluginId}"`);
+    } else {
+      console.log(`  plugin "${pluginId}": already configured`);
+    }
+
+    writeFileSync(target.path, JSON.stringify(cfg, null, 2) + '\n');
+    console.log(`  Saved ${target.path}`);
+  }
+}
 
 if (!IS_CLAUDE) {
   console.log(`
@@ -85,7 +182,11 @@ Setup complete!
 Start the dashboard:  node dist/server.js
 MCP server (stdio):   node dist/index.js
 Dashboard URL:        http://localhost:3423
-`);
+${
+  IS_OPENCODE
+    ? 'OpenCode: the plugin loads automatically on next session start. See docs/SETUP.md#opencode-plugins for env-var tuning.\n'
+    : ''
+}`);
   process.exit(0);
 }
 

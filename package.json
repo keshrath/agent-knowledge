@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -17,7 +17,8 @@
     "./dist/lib.js": {
       "types": "./dist/lib.d.ts",
       "default": "./dist/lib.js"
-    }
+    },
+    "./opencode": "./scripts/plugins/opencode/agent-knowledge.ts"
   },
   "bin": {
     "agent-knowledge": "dist/index.js"
@@ -67,7 +68,8 @@
     "model-context-protocol",
     "ai-agents",
     "coding-assistants",
-    "claude-code"
+    "claude-code",
+    "opencode"
   ],
   "author": "keshrath",
   "mcpName": "io.github.keshrath/agent-knowledge",

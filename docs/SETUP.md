@@ -258,24 +258,62 @@ See [`docs/HOOKS.md`](HOOKS.md) for the full hook reference including environmen
 
 ### OpenCode Plugins
 
-OpenCode supports lifecycle hooks via JavaScript/TypeScript plugins. Create a plugin in `.opencode/plugins/` or `~/.config/opencode/plugins/`:
+agent-knowledge ships a first-class opencode plugin at `scripts/plugins/opencode/agent-knowledge.ts`, exposed via the `"./opencode"` subpath export. Register it by adding one line to your `opencode.json`:
 
-```typescript
-// .opencode/plugins/agent-knowledge.ts
-import type { Plugin } from '@opencode-ai/plugin';
-
-export const AgentKnowledgePlugin: Plugin = async ({ client }) => {
-  return {
-    event: async (event) => {
-      if (event.type === 'session.created') {
-        // Knowledge base instructions provided via AGENTS.md
-      }
-    },
-  };
-};
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "agent-knowledge": {
+      "type": "local",
+      "command": ["node", "/absolute/path/to/agent-knowledge/dist/index.js"],
+      "enabled": true,
+      "timeout": 60000
+    }
+  },
+  "plugin": ["agent-knowledge/opencode"]
+}
 ```
 
-Available events: `session.created`, `session.idle`, `tool.execute.before`, `tool.execute.after`, `message.updated`, `file.edited`.
+Or let `scripts/setup.js` wire it automatically:
+
+```bash
+node scripts/setup.js --host=opencode                      # global ~/.config/opencode/opencode.json
+node scripts/setup.js --host=opencode --workspace=/proj    # workspace-local opencode.json
+node scripts/setup.js --host=all                           # both Claude Code and OpenCode
+```
+
+#### What the plugin does
+
+Mirrors the Claude Code hooks where opencode has an equivalent event:
+
+| Claude Code hook          | OpenCode analog                   | Behavior                                                              |
+| ------------------------- | --------------------------------- | --------------------------------------------------------------------- |
+| `session-start.js`        | `event: session.created`          | Dashboard URL toast + clears stale first-prompt marker on resume.     |
+| `first-prompt-inject.mjs` | `chat.message`                    | Searches the KB and prepends a rendered hits block to the user parts. |
+| `precompact-flush.mjs`    | `experimental.session.compacting` | Pushes a "save unsaved knowledge before compaction" nudge.            |
+| `sessionend-distill.mjs`  | `event: session.deleted`          | Writes `~/agent-knowledge/projects/session-opencode-<slug>.md`.       |
+
+Not ported (opencode has no equivalent surface):
+
+- `session-start-ingest.mjs` (paired with the `/knowledge-ingest` skill flow).
+- `precompact-distill.mjs` (opencode compaction does not expose the transcript to plugins).
+- L0 identity auto-load (no `additionalContext` equivalent — put identity in `AGENTS.md` or call `knowledge(action="wakeup")` manually).
+
+#### Environment variables
+
+Same as the Claude hooks, all optional:
+
+| Variable                               | Default             | Description                                              |
+| -------------------------------------- | ------------------- | -------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`           | `~/agent-knowledge` | Knowledge base root.                                     |
+| `AGENT_KNOWLEDGE_DATA_DIR`             | `<memory>/.data`    | Marker/cache dir (first-prompt-seen markers live here).  |
+| `AGENT_KNOWLEDGE_PORT`                 | `3423`              | Dashboard port (plugin queries `/api/knowledge/search`). |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`                 | Set `0` / `false` / `off` to disable inject entirely.    |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`               | Max inject tokens (chars/4), clamped `[100, 8000]`.      |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`                 | Max rendered hits, clamped `[1, 20]`.                    |
+
+Every hook fails open — errors during search, toast, session walk, or disk write are swallowed and the user is never blocked.
 
 Combine with `AGENTS.md` instructions (see below).
 

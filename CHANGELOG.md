@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.9.7 (2026-04-21) — first-class OpenCode plugin + setup auto-wiring
+
+OpenCode parity for the lifecycle hooks that were previously Claude-Code-only.
+
+### Added
+
+- **`scripts/plugins/opencode/agent-knowledge.ts`** — in-repo opencode plugin, exposed via the new `"./opencode"` subpath export in `package.json`. Users register it with a single line in `opencode.json`: `"plugin": ["agent-knowledge/opencode"]`. Covers four of the six Claude Code lifecycle hooks:
+  - `event: session.created` → session-start announce (dashboard URL toast + clears stale first-prompt marker on resume)
+  - `chat.message` → first-prompt-inject (searches KB via dashboard `/api/knowledge/search`, prepends rendered hits block to user parts, sets marker, emits a `"injected N hits"` toast)
+  - `experimental.session.compacting` → precompact-flush (pushes the "save unsaved knowledge before compaction" nudge into `output.context`)
+  - `event: session.deleted` → sessionend-distill (walks `client.session.messages`, writes `~/agent-knowledge/projects/session-opencode-<slug>.md` with turn counts, tool uses, and first 20 user prompts)
+
+  Honours the same env vars as the Claude hooks (`AGENT_KNOWLEDGE_MEMORY_DIR`, `AGENT_KNOWLEDGE_DATA_DIR`, `AGENT_KNOWLEDGE_PORT`, `AGENT_KNOWLEDGE_FIRSTPROMPT_*`). Fails open on every handler — search timeout, toast failure (CLI mode), SDK error on session walk, disk write failure — so the user is never blocked.
+
+- **`scripts/setup.js --host=opencode|all`** — new flag alongside the existing `--agent` (kept for back-compat). Auto-detects `~/.config/opencode/opencode.json` (Linux/macOS) or `%APPDATA%\opencode\opencode.json` (Windows); `--workspace=<path>` configures a project-local config. Idempotently ensures `mcp.agent-knowledge` + `plugin` array contain the plugin id.
+
+- **`tests/plugins/opencode.test.ts`** — direct-import vitest suite covering plugin shape, first-prompt gating (short / slash / bang prompts skipped, marker set even on zero-hit, second turn does not re-inject), `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT=0` kill-switch, compacting context push, session.deleted distill disk output, and fail-open on toast + session-walk errors.
+
+### Not ported (no opencode analog)
+
+- `session-start-ingest.mjs` — paired with the `/knowledge-ingest` skill flow, which is Claude-Code-specific.
+- `precompact-distill.mjs` — opencode compaction does not expose the transcript to plugins.
+- L0 identity auto-load — opencode has no `additionalContext` equivalent; identity lives in `AGENTS.md` or on-demand `knowledge(action="wakeup")` calls.
+
+### Tests
+
+571 → 583 passing (12 new assertions across plugin shape, first-prompt gating, compacting context, and session.deleted distill). No changes to the Claude hook suite.
+
 ## 1.9.6 (2026-04-21) — visible SessionEnd receipts + live dashboard toasts
 
 Three-layer visibility for the SessionEnd distill hook, so "did it actually run?" never has to be guessed again.
