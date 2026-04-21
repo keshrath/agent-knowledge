@@ -162,6 +162,21 @@ a markdown summary to
 `~/agent-knowledge/projects/session-<slug>-<session>.md`. Gives
 agent-knowledge a breadcrumb for later session search/recall.
 
+Also emits a user-visible `systemMessage` on stdout so you can tell the
+hook actually ran — receipt of the turn / tool-use counts and the target
+file path, or the reason for skipping (missing transcript, write failure).
+A one-line breadcrumb is appended to
+`~/agent-knowledge/sessions/index.md` on every successful distill, so
+the receipt is durable even when the host tears the transcript down
+before painting the message.
+
+On a successful distill the hook also POSTs the receipt to the dashboard's
+`POST /api/events` endpoint (port from `AGENT_KNOWLEDGE_PORT`, default
+3423). If the dashboard is open, a live toast appears top-right the moment
+the session ends — covers hosts (like Claude Code `/exit`) that swallow
+`systemMessage` on SessionEnd. Fails open on ECONNREFUSED / timeout; set
+`AGENT_KNOWLEDGE_DASHBOARD_EVENTS=0` to suppress the POST entirely.
+
 ## Manual configuration
 
 `scripts/setup.js` writes the hooks into `~/.claude/settings.json`

@@ -167,4 +167,62 @@ describe('dashboard HTTP server', () => {
       req.end();
     });
   });
+
+  function postJson(path: string, body: unknown): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const payload = JSON.stringify(body);
+      const req = http.request(
+        {
+          hostname: 'localhost',
+          port: TEST_PORT,
+          path,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload),
+          },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (c) => (data += c));
+          res.on('end', () => resolve({ status: res.statusCode!, body: data }));
+          res.on('error', reject);
+        },
+      );
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  it('POST /api/events records an event and returns id + ts', async () => {
+    const { status, body } = await postJson('/api/events', {
+      kind: 'session-end',
+      message: 'test receipt',
+    });
+    expect(status).toBe(201);
+    const data = JSON.parse(body);
+    expect(typeof data.id).toBe('number');
+    expect(data.id).toBeGreaterThan(0);
+    expect(typeof data.ts).toBe('number');
+  });
+
+  it('POST /api/events advances the id monotonically', async () => {
+    const a = JSON.parse((await postJson('/api/events', { kind: 'k', message: 'a' })).body);
+    const b = JSON.parse((await postJson('/api/events', { kind: 'k', message: 'b' })).body);
+    expect(b.id).toBeGreaterThan(a.id);
+  });
+
+  it('POST /api/events rejects missing required fields with 422', async () => {
+    const { status } = await postJson('/api/events', { kind: 'k' });
+    expect(status).toBe(422);
+  });
+
+  it('POST /api/events rejects over-long message with 422', async () => {
+    const { status } = await postJson('/api/events', {
+      kind: 'k',
+      message: 'x'.repeat(513),
+    });
+    expect(status).toBe(422);
+  });
 });

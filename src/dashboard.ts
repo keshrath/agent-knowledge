@@ -170,6 +170,40 @@ function resolveUiDir(): string {
   return srcUi;
 }
 
+// ── Live event ring ─────────────────────────────────────────────────────────
+// Short in-memory buffer of recent events (session-end receipts, etc.) that
+// the UI reads via the WS state push and renders as toast notifications. The
+// ring is fingerprint-tracked so the existing WS poll picks up new events as
+// state deltas — no bespoke broadcast channel needed. Intentionally tiny and
+// unpersisted; authoritative receipts still land on disk as session files /
+// breadcrumbs. Oldest drops when the ring is full.
+
+interface LiveEvent {
+  id: number;
+  kind: string;
+  message: string;
+  ts: number;
+}
+
+const EVENT_RING_MAX = 10;
+const eventRing: LiveEvent[] = [];
+let nextEventId = 1;
+
+function recordEvent(kind: string, message: string): LiveEvent {
+  const evt: LiveEvent = { id: nextEventId++, kind, message, ts: Date.now() };
+  eventRing.push(evt);
+  while (eventRing.length > EVENT_RING_MAX) eventRing.shift();
+  return evt;
+}
+
+function getRecentEvents(): LiveEvent[] {
+  return eventRing.slice();
+}
+
+function eventHeadId(): number {
+  return eventRing.length > 0 ? eventRing[eventRing.length - 1].id : 0;
+}
+
 // ── State snapshot (cached, used by WS) ──────────────────────────────────────
 
 interface Snapshot {
@@ -235,6 +269,7 @@ function fullState(): Record<string, unknown> {
   }
   return {
     knowledge,
+    events: getRecentEvents(),
     stats: {
       knowledge_entries: s.knowledge.length,
       session_count: s.sessionCount,
@@ -540,6 +575,35 @@ const sessionDetailRoute: RouteHandler = (req, res, params) => {
   json(res, { error: `Session ${sessionId} not found` }, 404);
 };
 
+// ── Events endpoint ────────────────────────────────────────────────────────
+// POST /api/events { kind, message } — records a live event in the ring so
+// the UI can render a toast. Fire-and-forget from hooks (fail-open caller
+// side). Kind is a short category tag ("session-end", "distill", …) and
+// message is a short human-readable line. No auth, same-origin assumption
+// matching the rest of the dashboard.
+
+const eventsRoute: RouteHandler = async (req, res) => {
+  let body: Record<string, unknown>;
+  try {
+    body = await readBody(req, 4_096);
+  } catch (e) {
+    json(res, { error: e instanceof Error ? e.message : 'Bad request' }, 400);
+    return;
+  }
+  const kind = typeof body.kind === 'string' ? body.kind.trim() : '';
+  const message = typeof body.message === 'string' ? body.message.trim() : '';
+  if (!kind || !message) {
+    json(res, { error: 'Required fields: kind, message' }, 422);
+    return;
+  }
+  if (kind.length > 64 || message.length > 512) {
+    json(res, { error: 'kind <= 64 chars, message <= 512 chars' }, 422);
+    return;
+  }
+  const evt = recordEvent(kind, message);
+  json(res, { id: evt.id, ts: evt.ts }, 201);
+};
+
 // ── Write endpoint ──────────────────────────────────────────────────────────
 // POST /api/knowledge — mirrors the MCP knowledge(action=write) pipeline:
 // writeEntry → index → auto-link → git push. Used by agent-tasks
@@ -650,6 +714,7 @@ export function startDashboard(port?: number): Promise<http.Server> {
   router.route('GET', '/api/sessions/:sessionId/summary', sessionSummaryRoute);
   router.route('GET', '/api/sessions/:sessionId', sessionDetailRoute);
   router.route('POST', '/api/knowledge', knowledgeWriteRoute);
+  router.route('POST', '/api/events', eventsRoute);
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
@@ -680,7 +745,10 @@ export function startDashboard(port?: number): Promise<http.Server> {
       httpServer: server,
       getFingerprints: () => {
         const s = buildSnapshot();
-        return { v: `${s.builtAt}:${s.knowledge.length}:${s.sessionCount}` };
+        return {
+          v: `${s.builtAt}:${s.knowledge.length}:${s.sessionCount}`,
+          events: String(eventHeadId()),
+        };
       },
       getCategoryData: () => fullState(),
       getFullState: () => fullState(),

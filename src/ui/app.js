@@ -29,6 +29,7 @@
     panel: { open: false, type: null, data: null },
     stats: { knowledgeCount: 0, sessionCount: 0, vectorCount: 0 },
     connected: false,
+    lastEventId: 0,
   };
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -181,6 +182,7 @@
           if (msg.stats.version) el.version.textContent = 'v' + msg.stats.version;
           updateStats();
         }
+        if (Array.isArray(msg.events)) handleEvents(msg.events);
         el.loadingOverlay.classList.add('hidden');
         break;
       case 'knowledge:update':
@@ -216,6 +218,59 @@
       s.className = 'status-badge disconnected';
       s.textContent = 'Disconnected';
     }
+  }
+
+  // ── Toast notifications ────────────────────────────────────────────────────
+  // Events pushed by POST /api/events ride along in the WS state payload as
+  // `state.events = [...ring]`. On the first state delivery we only record
+  // the head id and skip rendering — otherwise a reconnect would replay the
+  // last 10 toasts. Subsequent deliveries render any event whose id is newer
+  // than the cursor.
+
+  function handleEvents(events) {
+    const firstDelivery = state.lastEventId === 0;
+    let maxId = state.lastEventId;
+    for (const evt of events) {
+      if (!evt || typeof evt.id !== 'number') continue;
+      if (evt.id > maxId) maxId = evt.id;
+      if (!firstDelivery && evt.id > state.lastEventId) showToast(evt);
+    }
+    state.lastEventId = maxId;
+  }
+
+  function toastContainer() {
+    let c = document.getElementById('toast-container');
+    if (!c) {
+      c = document.createElement('div');
+      c.id = 'toast-container';
+      document.body.appendChild(c);
+    }
+    return c;
+  }
+
+  function showToast(evt) {
+    const container = toastContainer();
+    const t = document.createElement('div');
+    t.className = 'toast toast--' + (evt.kind || 'info').replace(/[^a-z0-9-]/gi, '-');
+    const kind = document.createElement('div');
+    kind.className = 'toast__kind';
+    kind.textContent = evt.kind || 'info';
+    const msg = document.createElement('div');
+    msg.className = 'toast__message';
+    msg.textContent = evt.message || '';
+    t.appendChild(kind);
+    t.appendChild(msg);
+    container.appendChild(t);
+
+    // Trigger slide-in on next frame
+    requestAnimationFrame(() => t.classList.add('toast--visible'));
+
+    const dismiss = () => {
+      t.classList.remove('toast--visible');
+      setTimeout(() => t.remove(), 250);
+    };
+    t.addEventListener('click', dismiss);
+    setTimeout(dismiss, 6000);
   }
 
   // ── Tabs ───────────────────────────────────────────────────────────────────

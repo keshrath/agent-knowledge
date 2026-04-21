@@ -2267,3 +2267,56 @@ h1 {
     font-size: 16px;
   }
 }
+
+/* Toast notifications — fed by POST /api/events → WS state.events */
+
+#toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 380px;
+}
+
+.toast {
+  pointer-events: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  box-shadow: var(--shadow-2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(24px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.toast--visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.toast__kind {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.toast__message {
+  color: var(--fg, inherit);
+  word-break: break-word;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+}

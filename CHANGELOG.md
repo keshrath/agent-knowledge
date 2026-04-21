@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.9.6 (2026-04-21) — visible SessionEnd receipts + live dashboard toasts
+
+Three-layer visibility for the SessionEnd distill hook, so "did it actually run?" never has to be guessed again.
+
+### Changed
+
+- **`scripts/hooks/sessionend-distill.mjs` now emits a top-level `systemMessage`** with a one-line receipt whenever the hook fires, so the user can tell the SessionEnd distill actually ran and what it did. Previously the hook wrote the `~/agent-knowledge/projects/session-<slug>-<session>.md` marker silently and returned `{}` — indistinguishable from "hook never fired" in the transcript. Receipts cover all three paths: successful distill (`knowledge: SessionEnd — 17u/12a turns, 45 tool uses → <file>`), transcript unavailable (`knowledge: SessionEnd skipped — transcript unavailable`), and write failure (`knowledge: SessionEnd — write failed for <file>`). Matches the visibility treatment given to `session-start.js`, `first-prompt-inject.mjs`, and `precompact-flush.mjs` in 1.9.3–1.9.5.
+- **Durable breadcrumb** appended to `~/agent-knowledge/sessions/index.md` on every successful distill (same file PreCompact already uses). Survives even if the host tears the transcript down before painting the `systemMessage`, so the receipt stays recoverable via the dashboard and `knowledge(action="list")`. Best-effort — breadcrumb write failures are swallowed.
+
+### Added
+
+- **`POST /api/events` on the dashboard** (port 3423). Accepts `{kind, message}` and records the event in a 10-entry in-memory ring. Events ride along in the existing WS `state` payload — no new broadcast channel. Kind ≤ 64 chars, message ≤ 512 chars, validated on the server. Backstop for hosts that swallow `systemMessage` on SessionEnd (Claude Code `/exit` tears the TUI down before painting).
+- **Toast UI in `src/ui/app.js` + `src/ui/styles.css`.** Listens for `state.events` from the WebSocket, compares against a `lastEventId` cursor (initialised from the first delivery so a reconnect doesn't replay old toasts), and renders a slide-in toast top-right. Click dismisses; auto-dismiss after 6s. Matches existing MD3 design tokens — no emojis, accent-tinted border, JetBrains Mono for the message body.
+- **`sessionend-distill.mjs` POSTs its receipt to `/api/events`** after the file write and breadcrumb append. Fires a live toast in the open dashboard the moment the session ends. Fails open on any transport error (timeout 1.5s, ECONNREFUSED, etc.); disk receipts remain authoritative.
+
+### Environment
+
+- `AGENT_KNOWLEDGE_PORT` (existing) — hook uses it to resolve the dashboard endpoint. Defaults to 3423.
+- `AGENT_KNOWLEDGE_DASHBOARD_EVENTS=0` — opt out of the toast POST entirely. The disk receipts + `systemMessage` still run.
+
+### Tests
+
+571/571 passing (was 565). Three existing `sessionend-distill.mjs` assertions flipped from `expect(json).toEqual({})` to assert the new `systemMessage` shape on each path (valid transcript, missing transcript_path, empty stdin). Four new dashboard assertions cover `POST /api/events` happy path, monotonic id advance, missing-field 422, and over-long-message 422. Two new hook assertions cover the POST firing on successful distill (mock HTTP server on an ephemeral port) and `AGENT_KNOWLEDGE_DASHBOARD_EVENTS=0` suppressing the POST entirely while the disk receipts still run.
+
 ## 1.9.5 (2026-04-20) — PreCompact nudge schema fix
 
 ### Fixed

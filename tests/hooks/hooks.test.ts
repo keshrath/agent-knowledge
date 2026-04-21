@@ -285,22 +285,33 @@ describe('precompact-distill.mjs', () => {
 // ---------------------------------------------------------------------------
 
 describe('sessionend-distill.mjs', () => {
-  it('exits 0 on empty stdin', async () => {
-    const { code, json } = await runHook('sessionend-distill.mjs', '', { env: isolatedEnv });
+  // Isolate dashboard POST attempts by pointing at an unused port so every
+  // test in this block fails open (ECONNREFUSED) without interfering with
+  // any running agent-knowledge dashboard.
+  const noDashEnv = {
+    ...isolatedEnv,
+    AGENT_KNOWLEDGE_PORT: '1',
+    AGENT_KNOWLEDGE_DASHBOARD_EVENTS: '1',
+  };
+
+  it('exits 0 on empty stdin and reports transcript unavailable', async () => {
+    const { code, json } = await runHook('sessionend-distill.mjs', '', { env: noDashEnv });
     expect(code).toBe(0);
-    expect(json).toEqual({});
+    const obj = json as { systemMessage?: string };
+    expect(obj.systemMessage).toMatch(/transcript unavailable/);
   });
 
-  it('missing transcript_path → {}', async () => {
+  it('missing transcript_path → skip message', async () => {
     const { json } = await runHook(
       'sessionend-distill.mjs',
       { session_id: 'abc' },
-      { env: isolatedEnv },
+      { env: noDashEnv },
     );
-    expect(json).toEqual({});
+    const obj = json as { systemMessage?: string };
+    expect(obj.systemMessage).toMatch(/transcript unavailable/);
   });
 
-  it('valid transcript does not crash', async () => {
+  it('valid transcript emits user-visible systemMessage with turn/tool counts', async () => {
     const file = join(scratch, 'end-transcript.jsonl');
     writeFileSync(
       file,
@@ -323,10 +334,116 @@ describe('sessionend-distill.mjs', () => {
         session_id: 'testsess2',
         workspace: { current_dir: scratch },
       },
-      { env: isolatedEnv },
+      { env: noDashEnv },
     );
     expect(code).toBe(0);
-    expect(json).toEqual({});
+    const obj = json as { systemMessage?: string };
+    expect(obj.systemMessage).toMatch(/^knowledge: SessionEnd — 1u\/2a turns, 1 tool uses →/);
+    expect(obj.systemMessage).toMatch(/session-.*-testsess\.md$/);
+  });
+
+  it('POSTs the receipt to /api/events when the dashboard is reachable', async () => {
+    const { createServer } = await import('node:http');
+    const received: Array<{ kind: string; message: string }> = [];
+    const server = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/events') {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          try {
+            received.push(JSON.parse(body));
+          } catch {
+            // ignore
+          }
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ id: 1, ts: Date.now() }));
+        });
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    const port: number = await new Promise((resolveP) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        resolveP(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+
+    try {
+      const file = join(scratch, 'end-transcript-post.jsonl');
+      writeFileSync(
+        file,
+        [
+          JSON.stringify({ type: 'user', message: { content: 'hi' } }),
+          JSON.stringify({
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'ok' }] },
+          }),
+        ].join('\n'),
+      );
+      const { code } = await runHook(
+        'sessionend-distill.mjs',
+        {
+          transcript_path: file,
+          session_id: 'testsess3',
+          workspace: { current_dir: scratch },
+        },
+        {
+          env: {
+            ...isolatedEnv,
+            AGENT_KNOWLEDGE_PORT: String(port),
+            AGENT_KNOWLEDGE_DASHBOARD_EVENTS: '1',
+          },
+        },
+      );
+      expect(code).toBe(0);
+      expect(received).toHaveLength(1);
+      expect(received[0].kind).toBe('session-end');
+      expect(received[0].message).toMatch(/^1u\/1a turns, 0 tool uses →/);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it('AGENT_KNOWLEDGE_DASHBOARD_EVENTS=0 suppresses the POST', async () => {
+    const { createServer } = await import('node:http');
+    let hit = false;
+    const server = createServer((_req, res) => {
+      hit = true;
+      res.writeHead(201);
+      res.end('{}');
+    });
+    const port: number = await new Promise((resolveP) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        resolveP(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+
+    try {
+      const file = join(scratch, 'end-transcript-suppressed.jsonl');
+      writeFileSync(file, JSON.stringify({ type: 'user', message: { content: 'hi' } }));
+      const { code } = await runHook(
+        'sessionend-distill.mjs',
+        {
+          transcript_path: file,
+          session_id: 'testsess4',
+          workspace: { current_dir: scratch },
+        },
+        {
+          env: {
+            ...isolatedEnv,
+            AGENT_KNOWLEDGE_PORT: String(port),
+            AGENT_KNOWLEDGE_DASHBOARD_EVENTS: '0',
+          },
+        },
+      );
+      expect(code).toBe(0);
+      expect(hit).toBe(false);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 });
 
