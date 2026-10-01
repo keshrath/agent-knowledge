@@ -746,7 +746,7 @@ knowledge_analyze with action "search_gaps", since_days 7, min_count 3
 
 ## 6. REST API Reference
 
-The REST API is served by the dashboard. All responses include CORS headers. Rate limited: 100 requests/minute general, 20 requests/minute for search/analyze endpoints.
+The REST API is served by the dashboard. All endpoints are loopback only: foreign `Host`/`Origin` headers get 403, request bodies must be `application/json`, no wildcard CORS. Rate limited: 100 requests/minute general, 20 requests/minute for search/analyze endpoints.
 
 ### Health
 

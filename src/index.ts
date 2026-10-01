@@ -9,7 +9,6 @@ async function main() {
   let isLeader = false;
   try {
     await startDashboard(port);
-    process.stderr.write(`Dashboard: http://localhost:${port}\n`);
     isLeader = true;
   } catch {
     process.stderr.write(

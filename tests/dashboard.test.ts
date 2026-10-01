@@ -120,9 +120,9 @@ describe('dashboard HTTP server', () => {
     expect(status).toBe(404);
   });
 
-  it('returns CORS headers on responses', async () => {
+  it('never sends a wildcard CORS header', async () => {
     const { headers } = await fetch('/health');
-    expect(headers['access-control-allow-origin']).toBe('*');
+    expect(headers['access-control-allow-origin']).toBeUndefined();
   });
 
   it('serves static files for root path', async () => {
@@ -152,13 +152,19 @@ describe('dashboard HTTP server', () => {
     });
   });
 
-  it('allows OPTIONS requests (CORS preflight)', async () => {
+  it('answers a loopback preflight without a wildcard origin', async () => {
     return new Promise<void>((resolve, reject) => {
       const req = http.request(
-        { hostname: 'localhost', port: TEST_PORT, path: '/api/knowledge', method: 'OPTIONS' },
+        {
+          hostname: 'localhost',
+          port: TEST_PORT,
+          path: '/api/knowledge',
+          method: 'OPTIONS',
+          headers: { Origin: 'http://127.0.0.1:5173' },
+        },
         (res) => {
           expect(res.statusCode).toBe(204);
-          expect(res.headers['access-control-allow-origin']).toBe('*');
+          expect(res.headers['access-control-allow-origin']).toBe('http://127.0.0.1:5173');
           res.resume();
           resolve();
         },
@@ -166,6 +172,31 @@ describe('dashboard HTTP server', () => {
       req.on('error', reject);
       req.end();
     });
+  });
+
+  it('rejects a cross-origin POST', async () => {
+    return new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: 'localhost',
+          port: TEST_PORT,
+          path: '/api/events',
+          method: 'POST',
+          headers: { Origin: 'https://evil.com', 'Content-Type': 'application/json' },
+        },
+        (res) => {
+          expect(res.statusCode).toBe(403);
+          res.resume();
+          resolve();
+        },
+      );
+      req.on('error', reject);
+      req.end('{}');
+    });
+  });
+
+  it('binds loopback only', () => {
+    expect((server.address() as { address: string }).address).toBe('127.0.0.1');
   });
 
   function postJson(path: string, body: unknown): Promise<{ status: number; body: string }> {

@@ -470,6 +470,7 @@ Architecture notes, deployment info, etc.
 | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS`                     | --                  | Additional session directories, comma-separated                  |
 | `OPENCODE_DATA_DIR`                                       | (platform default)  | Override OpenCode data dir (default `~/.local/share/opencode`)   |
 | `AGENT_KNOWLEDGE_PORT`                                    | `3423`              | Dashboard HTTP/WebSocket port                                    |
+| `AGENT_KNOWLEDGE_HOST`                                    | `127.0.0.1`         | Dashboard bind address (`0.0.0.0` exposes it to the network)     |
 | `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider (local, openai, claude, gemini)               |
 | `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.5`               | Blend weight for semantic vs TF-IDF search (0-1)                 |
 | `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | —                   | Idle timeout for embedding worker (ms)                           |

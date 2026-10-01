@@ -405,6 +405,7 @@ All env vars live under the `AGENT_KNOWLEDGE_*` prefix. No host name is baked in
 | `AGENT_KNOWLEDGE_DATA_DIR`            | (platform config)   | Override the primary host data root. Leave unset in the common case — adapters auto-detect every well-known host root under `~/`. |
 | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` | --                  | Extra session directories, comma-separated. Added to whatever auto-detection finds.                                               |
 | `AGENT_KNOWLEDGE_PORT`                | `3423`              | Dashboard HTTP/WebSocket port                                                                                                     |
+| `AGENT_KNOWLEDGE_HOST`                | `127.0.0.1`         | Dashboard bind address (`0.0.0.0` exposes it to the network)                                                                      |
 
 ### Embeddings
 

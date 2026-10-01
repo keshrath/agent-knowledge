@@ -1,9 +1,10 @@
 // =============================================================================
 // agent-knowledge dashboard
 //
-// HTTP + WebSocket plumbing is delegated to agent-common (createRouter, json,
-// serveStatic, setupWebSocket). Only the knowledge-specific routes, the
-// per-endpoint heavy rate limiter, and the state snapshot live here.
+// HTTP + WebSocket plumbing is delegated to agent-common (startDashboard with
+// its 127.0.0.1 bind + request guard, createRouter, json, serveStatic,
+// setupWebSocket). Only the knowledge-specific routes, the per-endpoint heavy
+// rate limiter, and the state snapshot live here.
 // =============================================================================
 
 import http from 'http';
@@ -15,6 +16,7 @@ import {
   readBody,
   serveStatic,
   setupWebSocket,
+  startDashboard as startKitDashboard,
   type RouteHandler,
 } from 'agent-common';
 
@@ -716,10 +718,12 @@ export function startDashboard(port?: number): Promise<http.Server> {
   router.route('POST', '/api/knowledge', knowledgeWriteRoute);
   router.route('POST', '/api/events', eventsRoute);
 
-  return new Promise((resolve, reject) => {
-    const server = http.createServer(async (req, res) => {
+  return startKitDashboard({
+    port: listenPort,
+    host: process.env.AGENT_KNOWLEDGE_HOST,
+    handler: async (req, res) => {
       const isPost = req.method === 'POST';
-      if (req.method !== 'GET' && !isPost && req.method !== 'OPTIONS') {
+      if (req.method !== 'GET' && !isPost) {
         json(res, { error: 'Method not allowed' }, 405);
         return;
       }
@@ -739,45 +743,40 @@ export function startDashboard(port?: number): Promise<http.Server> {
       if (rateLimit(req, res, pathname)) return;
 
       await router.handle(req, res);
-    });
+    },
+    onListen: (server) => {
+      setupWebSocket({
+        httpServer: server,
+        getFingerprints: () => {
+          const s = buildSnapshot();
+          return {
+            v: `${s.builtAt}:${s.knowledge.length}:${s.sessionCount}`,
+            events: String(eventHeadId()),
+          };
+        },
+        getCategoryData: () => fullState(),
+        getFullState: () => fullState(),
+        pollIntervalMs: 5_000,
+      });
 
-    setupWebSocket({
-      httpServer: server,
-      getFingerprints: () => {
-        const s = buildSnapshot();
-        return {
-          v: `${s.builtAt}:${s.knowledge.length}:${s.sessionCount}`,
-          events: String(eventHeadId()),
-        };
-      },
-      getCategoryData: () => fullState(),
-      getFullState: () => fullState(),
-      pollIntervalMs: 5_000,
-    });
-
-    // ── File watcher (UI live reload via fs.watch) ─────────────────────────
-    let fileWatcher: fs.FSWatcher | null = null;
-    try {
-      if (fs.existsSync(uiDir)) {
-        fileWatcher = fs.watch(uiDir, { recursive: true }, () => {
-          // Best-effort: clients pick up changes on the next WS poll cycle.
-        });
+      // ── File watcher (UI live reload via fs.watch) ───────────────────────
+      let fileWatcher: fs.FSWatcher | null = null;
+      try {
+        if (fs.existsSync(uiDir)) {
+          fileWatcher = fs.watch(uiDir, { recursive: true }, () => {
+            // Best-effort: clients pick up changes on the next WS poll cycle.
+          });
+        }
+      } catch (err) {
+        console.error('[knowledge] file watcher:', err instanceof Error ? err.message : err);
       }
-    } catch (err) {
-      console.error('[knowledge] file watcher:', err instanceof Error ? err.message : err);
-    }
 
-    server.on('close', () => {
-      if (fileWatcher) fileWatcher.close();
-    });
-
-    server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') reject(new Error(`Port ${listenPort} already in use`));
-      else reject(err);
-    });
-
-    server.listen(listenPort, () => resolve(server));
-  });
+      server.on('close', () => {
+        if (fileWatcher) fileWatcher.close();
+      });
+    },
+    banner: (p) => `Dashboard: http://localhost:${p}`,
+  }).then((dashboard) => dashboard.httpServer);
 }
 
 export { serveStatic };
