@@ -3,8 +3,8 @@
 //
 // Spawns each script in scripts/hooks/ as a child process with crafted
 // stdin, asserts it fails open and emits shape-correct JSON for the Claude
-// Code hook schema. Covers all four hooks: session-start, precompact-flush,
-// precompact-distill, sessionend-distill.
+// Code hook schema. Covers every hook: session-start, session-start-ingest,
+// first-prompt-inject, precompact-flush, precompact-distill, sessionend-distill.
 // =============================================================================
 
 import { describe, it, expect } from 'vitest';
@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -96,10 +97,10 @@ describe('session-start.js', () => {
     expect(obj.hookSpecificOutput?.hookEventName).toBe('SessionStart');
   });
 
-  it('emits user-visible systemMessage with dashboard URL', async () => {
+  it('emits a user-visible systemMessage naming the /knowledge pane', async () => {
     const { json } = await runHook('session-start.js', {});
     const obj = json as { systemMessage?: string };
-    expect(obj.systemMessage).toMatch(/^agent-knowledge: http:\/\/localhost:/);
+    expect(obj.systemMessage).toMatch(/^agent-knowledge: \/knowledge/);
   });
 
   it('emits identity-onboarding instruction when no identity.md AND no decline marker', async () => {
@@ -285,13 +286,13 @@ describe('precompact-distill.mjs', () => {
 // ---------------------------------------------------------------------------
 
 describe('sessionend-distill.mjs', () => {
-  // Isolate dashboard POST attempts by pointing at an unused port so every
+  // Isolate REST POST attempts by pointing at an unused port so every
   // test in this block fails open (ECONNREFUSED) without interfering with
-  // any running agent-knowledge dashboard.
+  // any running agent-knowledge REST server.
   const noDashEnv = {
     ...isolatedEnv,
     AGENT_KNOWLEDGE_PORT: '1',
-    AGENT_KNOWLEDGE_DASHBOARD_EVENTS: '1',
+    AGENT_KNOWLEDGE_EVENTS: '1',
   };
 
   it('exits 0 on empty stdin and reports transcript unavailable', async () => {
@@ -342,7 +343,7 @@ describe('sessionend-distill.mjs', () => {
     expect(obj.systemMessage).toMatch(/session-.*-testsess\.md$/);
   });
 
-  it('POSTs the receipt to /api/events when the dashboard is reachable', async () => {
+  it('POSTs the receipt to /api/events when the REST server is reachable', async () => {
     const { createServer } = await import('node:http');
     const received: Array<{ kind: string; message: string }> = [];
     const server = createServer((req, res) => {
@@ -393,7 +394,7 @@ describe('sessionend-distill.mjs', () => {
           env: {
             ...isolatedEnv,
             AGENT_KNOWLEDGE_PORT: String(port),
-            AGENT_KNOWLEDGE_DASHBOARD_EVENTS: '1',
+            AGENT_KNOWLEDGE_EVENTS: '1',
           },
         },
       );
@@ -406,7 +407,7 @@ describe('sessionend-distill.mjs', () => {
     }
   });
 
-  it('AGENT_KNOWLEDGE_DASHBOARD_EVENTS=0 suppresses the POST', async () => {
+  it('AGENT_KNOWLEDGE_EVENTS=0 suppresses the POST', async () => {
     const { createServer } = await import('node:http');
     let hit = false;
     const server = createServer((_req, res) => {
@@ -435,7 +436,7 @@ describe('sessionend-distill.mjs', () => {
           env: {
             ...isolatedEnv,
             AGENT_KNOWLEDGE_PORT: String(port),
-            AGENT_KNOWLEDGE_DASHBOARD_EVENTS: '0',
+            AGENT_KNOWLEDGE_EVENTS: '0',
           },
         },
       );
@@ -672,4 +673,95 @@ process.on('exit', () => {
   } catch {
     // ignore
   }
+});
+
+// ---------------------------------------------------------------------------
+// session-start-ingest.mjs
+// ---------------------------------------------------------------------------
+
+describe('session-start-ingest.mjs', () => {
+  function project(files: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-knowledge-ingest-'));
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, rel)), { recursive: true });
+      writeFileSync(join(dir, rel), text);
+    }
+    return dir;
+  }
+
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const context = (json: unknown) =>
+    (json as { hookSpecificOutput?: { additionalContext?: string } }).hookSpecificOutput
+      ?.additionalContext ?? '';
+
+  it('says nothing for a folder with fewer than three source files', async () => {
+    const dir = project({ 'a.ts': 'x' });
+    const { code, json } = await runHook('session-start-ingest.mjs', { cwd: dir });
+    expect(code).toBe(0);
+    expect(json).toEqual({});
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('suggests a first ingest, naming the project from package.json', async () => {
+    const dir = project({
+      'package.json': JSON.stringify({ name: 'pelican-app' }),
+      'src/a.ts': 'a',
+      'src/b.ts': 'b',
+      'src/c.ts': 'c',
+      'node_modules/dep/index.js': 'skipped',
+    });
+    const { json } = await runHook('session-start-ingest.mjs', { cwd: dir });
+    expect(context(json)).toContain(
+      'Project "pelican-app" (3+ source files) has not been ingested',
+    );
+    expect(context(json)).toContain('/knowledge-ingest');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports up to date when every file matches the ingest cache', async () => {
+    const files = { 'src/a.ts': 'a', 'src/b.ts': 'b', 'src/c.ts': 'c' };
+    const dir = project(files);
+    writeFileSync(
+      join(dir, '.knowledge-ingest-cache.json'),
+      JSON.stringify({
+        project: 'pelican',
+        files: Object.fromEntries(Object.entries(files).map(([p, t]) => [p, { sha256: sha(t) }])),
+        entries_created: ['projects/pelican.md'],
+      }),
+    );
+    const { json } = await runHook('session-start-ingest.mjs', { cwd: dir });
+    expect(context(json)).toContain(
+      'Project "pelican" knowledge is up to date (3 files, 1 entries)',
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('counts changed, new and deleted files since the last ingest', async () => {
+    const dir = project({ 'src/a.ts': 'a2', 'src/b.ts': 'b', 'src/new.ts': 'n' });
+    writeFileSync(
+      join(dir, '.knowledge-ingest-cache.json'),
+      JSON.stringify({
+        project: 'pelican',
+        files: {
+          'src/a.ts': { sha256: sha('a') },
+          'src/b.ts': { sha256: sha('b') },
+          'src/gone.ts': { sha256: sha('g') },
+        },
+      }),
+    );
+    const { json } = await runHook('session-start-ingest.mjs', { cwd: dir });
+    expect(context(json)).toContain(
+      'has 3 file changes since last ingest (1 changed, 1 new, 1 deleted)',
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('fails open on a corrupt cache and on junk stdin', async () => {
+    const dir = project({ 'src/a.ts': 'a', 'src/b.ts': 'b', 'src/c.ts': 'c' });
+    writeFileSync(join(dir, '.knowledge-ingest-cache.json'), '{not json');
+    expect((await runHook('session-start-ingest.mjs', { cwd: dir })).json).toEqual({});
+    const junk = await runHook('session-start-ingest.mjs', 'not json');
+    expect(junk.code).toBe(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

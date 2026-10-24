@@ -239,7 +239,7 @@ Installs to both `~/.claude/skills/knowledge-ingest/` and `~/.agents/skills/know
 
 ### Manual
 
-Copy `skills/knowledge-ingest/SKILL.md` to either location:
+Copy `plugin/skills/knowledge-ingest/SKILL.md` to either location:
 
 ```bash
 ~/.claude/skills/knowledge-ingest/SKILL.md   # Claude Code, OpenCode, Cursor

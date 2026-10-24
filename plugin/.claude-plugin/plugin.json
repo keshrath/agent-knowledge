@@ -1,0 +1,14 @@
+{
+  "name": "agent-knowledge",
+  "displayName": "agent-knowledge",
+  "version": "2.0.0",
+  "description": "Cross-session memory for AI coding agents: a git-synced Markdown knowledge base with hybrid search, a typed knowledge graph and session distillation, browsed in the /knowledge pane.",
+  "author": {
+    "name": "keshrath"
+  },
+  "homepage": "https://github.com/keshrath/agent-knowledge",
+  "repository": "https://github.com/keshrath/agent-knowledge",
+  "license": "MIT",
+  "keywords": ["mcp", "memory", "knowledge-graph", "semantic-search", "claude-code"],
+  "types": "./types/index.d.ts"
+}

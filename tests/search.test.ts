@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { searchKnowledge } from '../src/knowledge/search.js';
+import { excerptText, searchKnowledge } from '../src/knowledge/search.js';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-search-test-'));
@@ -94,6 +94,29 @@ describe('searchKnowledge', () => {
     const results = searchKnowledge(tmpDir, 'typescript');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].excerpt.toLowerCase()).toContain('typescript');
+  });
+
+  it('takes excerpts from the body, never the frontmatter', () => {
+    const results = searchKnowledge(tmpDir, 'flask');
+    expect(results[0]?.entry.path).toBe('projects/python-api.md');
+    expect(results[0]!.excerpt).toContain('Python Flask');
+    expect(results[0]!.excerpt).not.toMatch(/---|title:|tags:/);
+  });
+
+  it('builds excerpt text without headings, one segment per paragraph and list item', () => {
+    expect(
+      excerptText(
+        '# Zebrafish\n\nThe zebrafish service\ndeploys with make ship.\n\n- REST stays\n- the dashboard is gone\n\n```\ncode\n```',
+      ),
+    ).toBe('The zebrafish service deploys with make ship. · REST stays · the dashboard is gone');
+  });
+
+  it('drops what a code block holds and table separator rows from excerpts', () => {
+    expect(
+      excerptText(
+        'Build it:\n\n```sh\nnpm run build\ntsc\n```\n\n| a | b |\n|---|:---:|\n| 1 | 2 |\n\n~~~\nraw\n~~~\nDone.',
+      ),
+    ).toBe('Build it: · a, b · 1, 2 · Done.');
   });
 
   it('handles special regex characters in query gracefully', () => {

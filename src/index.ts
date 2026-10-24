@@ -1,24 +1,35 @@
 #!/usr/bin/env node
+// =============================================================================
+// agent-knowledge — MCP stdio entry point
+//
+// Serves the MCP tools over stdio. The process that holds the REST port
+// (AGENT_KNOWLEDGE_PORT, default 3423) also runs the background indexer; the
+// others retry the port and take over when its holder exits.
+// =============================================================================
+
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createServer } from './server.js';
-import { startDashboard } from './dashboard.js';
+import { DEFAULT_PORT, serveRestWhenFree } from './rest-server.js';
+import { backgroundIndex, closeVectorStore } from './sessions/indexer.js';
 
 async function main() {
-  const port = parseInt(process.env.AGENT_KNOWLEDGE_PORT || '3423', 10);
+  const port = parseInt(process.env.AGENT_KNOWLEDGE_PORT || String(DEFAULT_PORT), 10);
+  const rest = serveRestWhenFree(port, 5_000, () => {
+    setTimeout(
+      () =>
+        backgroundIndex().catch((bgErr) =>
+          console.error('[knowledge] Background index failed:', bgErr),
+        ),
+      5000,
+    ).unref();
+  });
+  process.on('exit', () => {
+    rest.close();
+    closeVectorStore();
+  });
 
-  let isLeader = false;
-  try {
-    await startDashboard(port);
-    isLeader = true;
-  } catch {
-    process.stderr.write(
-      `[knowledge] Dashboard port ${port} in use — another instance is leader.\n`,
-    );
-  }
-
-  const server = createServer({ isLeader });
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const server = createServer();
+  await server.connect(new StdioServerTransport());
 }
 
 main().catch(console.error);

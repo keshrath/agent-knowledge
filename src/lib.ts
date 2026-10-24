@@ -6,7 +6,7 @@
 // =============================================================================
 
 // Server factory
-export { createServer, type ServerOptions } from './server.js';
+export { createServer } from './server.js';
 
 // Configuration
 export { getConfig, getConfigLocation, loadPersistedConfig, savePersistedConfig } from './types.js';

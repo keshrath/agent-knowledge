@@ -81,7 +81,7 @@ describe('AgentKnowledgePlugin', () => {
 });
 
 describe('event: session.created', () => {
-  it('shows a dashboard toast on session.created and never throws', async () => {
+  it('shows a toast naming the knowledge base on session.created and never throws', async () => {
     const { client, toasts } = makeClient();
     const hooks = await loadPlugin(client);
 
@@ -93,7 +93,7 @@ describe('event: session.created', () => {
     });
 
     expect(toasts.length).toBe(1);
-    expect(toasts[0]!.message).toContain('dashboard: http://localhost:3423');
+    expect(toasts[0]!.message).toMatch(/^knowledge base: /);
     expect(toasts[0]!.variant).toBe('info');
   });
 

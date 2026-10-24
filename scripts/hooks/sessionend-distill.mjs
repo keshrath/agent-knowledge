@@ -47,12 +47,12 @@ function appendBreadcrumb(line) {
   }
 }
 
-// Best-effort POST to the agent-knowledge dashboard so a live toast appears
-// in the UI when the session ends. Silently drops on any failure (dashboard
+// Best-effort POST to the agent-knowledge REST server so the /knowledge pane
+// shows the receipt when the session ends. Silently drops on any failure (server
 // not running, network error, timeout) — the disk receipts are authoritative.
-function postDashboardEvent(kind, message) {
+function postEvent(kind, message) {
   return new Promise((resolve) => {
-    if (process.env.AGENT_KNOWLEDGE_DASHBOARD_EVENTS === '0') {
+    if (process.env.AGENT_KNOWLEDGE_EVENTS === '0') {
       resolve();
       return;
     }
@@ -185,7 +185,7 @@ ${userMsgs
   if (wrote) {
     appendBreadcrumb(`- SessionEnd ${endedAt} ${sessionId} → ${file}`);
     const receipt = `${userTurns}u/${assistantTurns}a turns, ${toolUses} tool uses → ${file}`;
-    await postDashboardEvent('session-end', receipt);
+    await postEvent('session-end', receipt);
     emit(`knowledge: SessionEnd — ${receipt}`);
   } else {
     emit(`knowledge: SessionEnd — write failed for ${file}`);

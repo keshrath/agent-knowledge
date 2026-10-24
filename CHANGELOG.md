@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.0.0 (2026-10-23) — the /knowledge pane replaces the web dashboard
+
+### Breaking
+
+- **The web dashboard is gone**: `src/ui/`, the WebSocket and its livereload file watcher, static file serving, the CSP and browser-only headers, and the Playwright dashboard suite. Port 3423 now answers JSON only. In Claude Code, `/knowledge` (agent-knowledge plugin) shows the knowledge base in a pane beside the conversation.
+- **REST routes the dashboard alone used are removed**: `/api/index-status`, `/api/knowledge/consolidate|reflect|god-nodes|bridges|gaps|brief|graph-data`, `/api/sessions/recall`, `/api/sessions/:id`. The MCP tools keep every one of these capabilities.
+- **`GET /api/sessions` always answers `{ sessions, total }`** (limit default 50, max 500, `offset`), not a bare array.
+- **`GET /api/knowledge/:path`** answers 404 for a missing entry and 400 for a path outside the knowledge base (was 500).
+- **The plugin moved to `plugin/`**: `plugin/.claude-plugin/plugin.json`, `plugin/.mcp.json` (`agent-knowledge@^2`), and the knowledge-ingest skill at `plugin/skills/knowledge-ingest/`. The marketplace entry points at `./plugin`. The root `.mcp.json` is removed.
+- **`AGENT_KNOWLEDGE_DASHBOARD_EVENTS` is renamed `AGENT_KNOWLEDGE_EVENTS`** (`0` stops the session-end hook's `POST /api/events`).
+- **No agent-common dependency**: the request guard, the router and the package metadata live in `src/`.
+- **Background indexing runs only in the process that serves the REST port**: `createServer()` (also from `agent-knowledge/lib`) no longer starts it. A program embedding the library gets no embeddings unless it runs `backgroundIndex()` itself.
+
+### Added
+
+- **The `/knowledge` pane** (`plugin/hooks/`, Claude Code 2.1.289+): see the user manual.
+- **REST takeover**: the first MCP process serves `127.0.0.1:3423`; the others retry the port every 5 s, so the pane and the hooks keep working when the serving session exits. The process holding the port also runs the background indexer, so it moves with the takeover.
+- **Pane routes**: `GET /api/overview`, `GET /api/analysis`, `DELETE /api/knowledge/:path`, `POST /api/knowledge/sync`; `GET /api/knowledge/:path/links` gives each edge the title of the entry at its other end.
+- **Tests**: every kept REST route against its caller's contract, the request guard, the takeover, the release manifests, the session-start-ingest hook, and a real Claude Code suite (`tests/e2e-claude/mcp.e2e.test.ts`, `AGENT_KNOWLEDGE_E2E_CLAUDE=1`) that calls every MCP tool and action through `claude -p` and checks the files, git history and DB rows they leave.
+
+### Fixed
+
+- **Tool calls in Claude Code sessions were invisible**: Claude Code nests `tool_use` and `tool_result` blocks inside message content, which the parser dropped (tool calls) or indexed as JSON user text (results). The `tools` search scope never matched a Claude Code session and session summaries listed no tools. Both are now extracted as `tool_use` / `tool_result` messages.
+- **Prompts named tools that do not exist**: the reflect instructions said `knowledge_link` (now `knowledge_graph` action `link`), and the knowledge base README template listed `knowledge_list`, `knowledge_read`, `knowledge_write`, `knowledge_sync`, `knowledge_config`.
+- **The rate limiter is gone**: the server is loopback only and every caller shares one address, so its shared 100/min bucket throttled every pane and hook at once.
+- **A body over the size limit now gets its 413** instead of a reset connection.
+- **Knowledge-search excerpts showed the raw frontmatter** (`--- title: … tags: …`) to MCP callers and the pane; they now come from the entry body. Ranking still indexes the whole file.
+- **Search excerpts ran unrelated text together**: a heading was glued onto the body and list items lost their separators. Excerpts drop headings and code blocks (with what they hold), read a table row as its cells, and join paragraphs, list items and rows with `·`, for MCP callers and the pane alike.
+- **A session file under 32 KB got an end time equal to its start time** (`fastMeta` read the end only past 32 KB; a smaller file now takes its last timestamped line).
+- **Listing entries was slow on a large base** (1.1 s on 1,721 entries): the counts the pane polls come from file names alone.
+- **Link analysis ran the duplicate scan** (274 s on the same base); it now lists the most linked entries and the ones with one link or none, each entry in one list only.
+- **The REST server opened a new vector-store connection on every overview** and never closed it; it shares the indexer's one connection, closed on exit.
+- **Unit tests read the person's real sessions and config** through home-dir auto-detection, which made several of them slow or flaky; each test file now gets a scratch HOME (`tests/setup-home.ts`).
+
 ## 1.9.7 (2026-04-21) — first-class OpenCode plugin + setup auto-wiring
 
 OpenCode parity for the lifecycle hooks that were previously Claude-Code-only.

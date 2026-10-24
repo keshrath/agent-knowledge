@@ -27,23 +27,25 @@ graph TB
     Adapters --> ContinueDev[(Continue.dev<br/>JSON)]
     Adapters --> Aider[(Aider<br/>MD / JSONL)]
 
-    Server --> Dashboard[dashboard.ts — :3423]
-    Dashboard --> HTTP[REST API]
-    Dashboard --> WS[WebSocket]
-    Dashboard --> Watcher[File Watcher]
-    HTTP --> Browser[Browser UI]
-    WS --> Browser
+    Index[index.ts] --> Server
+    Index --> Rest[rest-server.ts — 127.0.0.1:3423]
+    Rest --> Guard[transport/guard.ts]
+    Guard --> Routes[transport/rest.ts]
+    Routes --> Pane["/knowledge pane (plugin/)"]
+    Routes --> Hooks[hooks, opencode plugin, agent-tasks]
 ```
 
 ## File Structure
 
 ```
 src/
-  index.ts              Entry point — MCP stdio + dashboard auto-start
+  index.ts              Entry point — MCP stdio; the REST port holder also runs the background indexer
   server.ts             6 tool definitions, request routing, error handling
   tool-handlers.ts      Action dispatch for each MCP tool + the v1.8 `promote` action
-  dashboard.ts          HTTP + WebSocket server, REST API, file watcher
-  package-meta.ts       Cached name/version from package.json (used by getVersion / MCP / dashboard)
+  rest-server.ts        REST server on 127.0.0.1 — startRestServer, serveRestWhenFree (leader election + takeover)
+  transport/            rest.ts (routes), http.ts (json, readBody, Router), guard.ts (Host / Origin / Content-Type)
+  events.ts             Live event ring (POST /api/events, read by the pane)
+  package-meta.ts       Cached name/version from package.json (used by getVersion / MCP / REST)
   types.ts              KnowledgeConfig interface, getConfig(), getVersion()
   wakeup.ts             Token-budgeted L0 identity + L1 top-weighted entry renderer
   knowledge/
@@ -79,14 +81,12 @@ src/
     types.ts            SearchResult, SearchOptions interfaces
   vectorstore/          sqlite-vec wrapper + chunker
   embeddings/           Pluggable embedding providers (openai / claude / gemini / local)
-  ui/
-    index.html          Dashboard SPA
-    styles.css          MD3 design tokens (light + dark)
-    app.js              Client-side JS (WebSocket, tabs, rendering)
+
+plugin/                 Claude Code plugin — .mcp.json, skills/knowledge-ingest, the /knowledge pane mod (hooks/)
 
 scripts/
   hooks/
-    session-start.js         SessionStart — dashboard URL + auto-wakeup injection
+    session-start.js         SessionStart — names the /knowledge pane + L0 identity injection
     first-prompt-inject.mjs  UserPromptSubmit — v1.8 query-targeted knowledge inject on the first real prompt
     precompact-flush.mjs     PreCompact — disk dump + save-unsaved-context nudge
     precompact-distill.mjs   PreCompact — lightweight user-prompt snapshot
@@ -252,7 +252,7 @@ Detects near-duplicate knowledge entries using TF-IDF similarity scoring.
 
 **`checkDuplicates()`** — called after `knowledge { action: "write" }`. Builds a TF-IDF index from all entries, queries with the written content, and returns entries exceeding a configurable similarity threshold (default: 0.6). Warnings are included in the write response.
 
-**`consolidate()`** — batch scan for `knowledge_consolidate`. Computes pairwise TF-IDF similarities for all entries in a category (or globally), groups entries above threshold (default: 0.5) into clusters using union-find, and returns clusters with representative entries and pairwise similarity scores.
+**`consolidate()`** — batch scan for `knowledge_analyze` action `consolidate`. Computes pairwise TF-IDF similarities for all entries in a category (or globally), groups entries above threshold (default: 0.5) into clusters using union-find, and returns clusters with representative entries and pairwise similarity scores.
 
 ## Reflection Cycle
 
@@ -264,7 +264,7 @@ Surfaces unconnected knowledge entries and prepares structured prompts for agent
 
 1. Unconnected entries with titles, categories, tags, and 300-char content summaries
 2. Connected entries as potential link targets
-3. Instructions for the agent to call `knowledge_link` with suggested relationships
+3. Instructions for the agent to call `knowledge_graph` action `link` with suggested relationships
 
 Does NOT call an LLM — the calling agent processes the prompt in its own context and makes `knowledge_graph(action: "link")` calls based on its analysis.
 
@@ -409,26 +409,15 @@ The `1 +` in IDF ensures single-document results still get a positive score.
 
 Levenshtein edit distance with two-row DP (O(n\*m) time, O(m) space). Fuzzy matching uses a sliding window of varying size to find approximate substring matches.
 
-## Dashboard
+## REST server
 
-### dashboard.ts
+### rest-server.ts
 
-Single HTTP server handles REST API, write endpoint, and static files:
+One process serves the REST API: the first MCP process to bind `127.0.0.1:AGENT_KNOWLEDGE_PORT` (default 3423). The others retry every 5 s (`serveRestWhenFree`), so one of them takes over when the serving session exits; the holder also starts the background session indexer. There is no web UI and no WebSocket (removed in 2.0); the `/knowledge` pane in `plugin/` polls the routes.
 
-- **Static serving**: resolves UI directory (checks `src/ui/` then `dist/ui/`), serves with MIME detection and CSP headers
-- **REST API (GET)**: routes for knowledge search, session list/search/recall/get/summary, health, graph analysis
-- **REST API (POST)**: `POST /api/knowledge` — write entry with full pipeline (git pull, write, embed, auto-link, git push). POST restricted to `/api/` paths.
-- **WebSocket**: `ws` library with `noServer` mode, heartbeat every 30s, initial state snapshot on connect
-- **File watcher**: `fs.watch` on UI directory, debounced 200ms, broadcasts `{type: "reload"}` to all WS clients
-
-### UI Architecture
-
-Vanilla JS SPA (no framework, no build step):
-
-- WebSocket connects on load, handles `state` and `reload` messages
-- 4 tabs with lazy data loading
-- `marked` + `DOMPurify` + `highlight.js` for markdown rendering
-- Theme persisted in `localStorage('agent-knowledge-theme')`
+- **Guard** (`transport/guard.ts`, every request): `Host` must be a loopback name with the port (defeats DNS rebinding), any `Origin` is refused (no browser is a caller), a body on POST/PUT/PATCH/DELETE must be `application/json`. No CORS headers.
+- **Routes** (`transport/rest.ts`): health, overview, entry list/read/links/delete/write/sync, search, analysis, sessions list/search/summary, events. `POST /api/knowledge` runs the full write pipeline (git pull, write, embed, auto-link, git push).
+- **No rate limiter**: every caller shares the loopback address, so one bucket would throttle every pane and hook at once; any local process can read the files anyway.
 
 ## Caching Strategy
 
@@ -501,7 +490,7 @@ Two write paths exist — MCP (stdio) and REST (HTTP). Both run the same pipelin
 sequenceDiagram
     participant C as Agent Session
     participant S as MCP Server
-    participant D as Dashboard (REST)
+    participant D as REST server
     participant G as Git
     participant F as File System
     participant V as Vector Store

@@ -10,6 +10,7 @@ const __dirname = dirname(__filename);
 const VALIDATE_PATH = join(
   __dirname,
   '..',
+  'plugin',
   'skills',
   'knowledge-ingest',
   'scripts',

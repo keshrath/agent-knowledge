@@ -126,10 +126,9 @@ Agent-knowledge automatically distills session insights into \`projects/\` entri
 
 ### Via MCP tools
 
-- \`knowledge_list\` / \`knowledge_read\` / \`knowledge_write\` — browse and edit entries
+- \`knowledge\` (actions list, read, write, delete, sync, wakeup) — browse and edit entries
 - \`knowledge_search\` — hybrid semantic + keyword search
-- \`knowledge_sync\` — manual git pull + push
-- \`knowledge_config\` — view or update settings
+- \`knowledge_admin\` (action config) — view or update settings
 
 ### File format
 

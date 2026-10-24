@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/Node-%3E%3D%2020-brightgreen.svg)](https://nodejs.org)
-[![Tests: 563 passing](https://img.shields.io/badge/Tests-563%20passing-brightgreen.svg)]()
+[![Tests: 604 passing](https://img.shields.io/badge/Tests-604%20passing-brightgreen.svg)]()
 [![MCP Tools: 6](https://img.shields.io/badge/MCP%20Tools-6-blueviolet.svg)]()
 [![LongMemEval R@5: 98.8%](https://img.shields.io/badge/LongMemEval%20R%405-98.8%25-brightgreen.svg)]()
 
@@ -10,16 +10,9 @@
 
 **Benchmark:** **R@5 = 97.2% (sparse) / 98.8% (hybrid)** on `longmemeval_s` and **86.0% (sparse) / 88.4% (hybrid)** on the harder `longmemeval_m` split — the public LongMemEval academic benchmark (Wu et al. 2024, ICLR 2025), full 500 questions per split, no LLM, no API key, runs entirely offline. **+8.6pp to +13.2pp R@5 over the paper's official `flat-bm25` baseline** in apples-to-apples reproduction. Full per-category table, reproduction instructions, and paper-comparison details in [`bench/README.md`](bench/README.md).
 
-<table>
-<tr>
-<td><img src="docs/assets/knowledge-light.png" alt="Knowledge Base (light)" width="480"></td>
-<td><img src="docs/assets/search-light.png" alt="Session Search" width="480"></td>
-</tr>
-<tr>
-<td align="center"><em>Knowledge base with category filtering</em></td>
-<td align="center"><em>TF-IDF ranked session search</em></td>
-</tr>
-</table>
+In Claude Code, the agent-knowledge plugin adds the `/knowledge` pane: the knowledge base beside the conversation. How it works, with pictures: [the user manual](docs/USER-MANUAL.md#4-the-knowledge-pane).
+
+![The /knowledge pane: open it, open an entry, follow a link](docs/images/manual/hero.gif)
 
 ## Why
 
@@ -60,8 +53,8 @@ No configuration needed. Additional session roots can be added via the `AGENT_KN
 - **Fuzzy matching** -- typo-tolerant search using Levenshtein distance
 - **6 search scopes** -- errors, plans, configs, tools, files, decisions
 - **6 MCP tools** -- consolidated action-based interface (`knowledge`, `knowledge_search`, `knowledge_session`, `knowledge_graph`, `knowledge_analyze`, `knowledge_admin`)
-- **Evergreen entries** -- `evergreen: true` in frontmatter exempts an entry from decay in ranking AND makes it append-only under promotion. Dashboard renders a push-pin badge on these cards.
-- **Author attribution** -- optional `author: <string>` frontmatter surfaces as a muted chip on each card.
+- **Evergreen entries** -- `evergreen: true` in frontmatter exempts an entry from decay in ranking AND makes it append-only under promotion. The `/knowledge` pane marks them.
+- **Author attribution** -- optional `author: <string>` frontmatter, kept with the entry and returned by the REST API.
 - **Code graph resolution** -- `calls`, `imports`, `inherits` edge types for code structure; directed BFS traversal (`outbound`/`inbound`/`both`); `bulk_link` for efficient ingestion; `unlink_by_origin` for clearing stale code edges before re-ingest; `code:` prefixed node IDs distinguish code from knowledge
 - **Temporal knowledge graph** -- edges support `valid_from` / `valid_to` validity windows; `as_of` queries return point-in-time snapshots; `invalidate` action marks facts as ended without deleting them
 - **Hybrid scoring boosts** -- proper-noun and temporal-proximity boosts on top of TF-IDF + semantic blend, capped at +66.7%, short-circuit when no signals are present
@@ -69,7 +62,7 @@ No configuration needed. Additional session roots can be added via the `AGENT_KN
 - **Verbatim session indexing** -- per-message chunks (≥30 chars) embedded into the vector store so raw conversation is retrievable; toggle with `AGENT_KNOWLEDGE_INDEX_VERBATIM=false`
 - **Configurable git URL** -- `knowledge_admin(action: "config")` for runtime setup, persisted at XDG/AppData location
 - **Cross-machine persistence** -- knowledge syncs via git, sessions read from local storage of each tool
-- **Real-time dashboard** -- browse, search, and manage at `localhost:3423`
+- **`/knowledge` pane in Claude Code** -- browse and search the knowledge base beside the conversation (agent-knowledge plugin)
 - **Secrets scrubbing** -- API keys, tokens, passwords, private keys automatically redacted before git push
 - **Knowledge graph** -- relationship edges between entries (related_to, supersedes, depends_on, contradicts, specializes, part_of, alternative_to, builds_on) with BFS traversal
 - **Confidence/decay scoring** -- entries scored by access frequency and recency; auto-promotion from candidate to established to proven
@@ -129,15 +122,18 @@ Add to your MCP client config (Claude Code, Cline, etc.):
 }
 ```
 
-The dashboard auto-starts at http://localhost:3423 on the first MCP connection.
+The first MCP process also serves a local REST API on `127.0.0.1:3423` (what the hooks, the `/knowledge` pane and agent-tasks call); when it exits, another running session takes the port over.
 
 See [Setup Guide](docs/SETUP.md) for client-specific instructions (Claude Code, Cursor, Windsurf, OpenCode).
 
-### Option 2: Standalone server (for REST/WebSocket clients)
+### Option 2: Claude Code plugin
 
 ```bash
-node dist/server.js --port 3423
+claude plugin marketplace add keshrath/agent-knowledge
+claude plugin install agent-knowledge@agent-knowledge
 ```
+
+The plugin brings the MCP server, the `knowledge-ingest` skill and the `/knowledge` pane (Claude Code 2.1.289+).
 
 ## MCP Tools (6)
 
@@ -230,22 +226,24 @@ Write-bench harness: `npm run bench:promote` — offline replay with auto-labeli
 
 ## REST API
 
-| Method | Endpoint                                | Description                |
-| ------ | --------------------------------------- | -------------------------- |
-| GET    | `/api/knowledge`                        | List knowledge entries     |
-| GET    | `/api/knowledge/search?q=`              | Search knowledge base      |
-| GET    | `/api/knowledge/:path`                  | Read a specific entry      |
-| GET    | `/api/knowledge/god-nodes?top_n=`       | Most-connected entries     |
-| GET    | `/api/knowledge/bridges?top_n=`         | Cross-category connectors  |
-| GET    | `/api/knowledge/gaps?max_entries=`      | Isolated entries           |
-| GET    | `/api/knowledge/brief`                  | Knowledge base brief       |
-| GET    | `/api/sessions`                         | List sessions              |
-| GET    | `/api/sessions/search?q=&role=&ranked=` | Search sessions (TF-IDF)   |
-| GET    | `/api/sessions/recall?scope=&q=`        | Scoped recall              |
-| GET    | `/api/sessions/:id`                     | Read a session             |
-| GET    | `/api/sessions/:id/summary`             | Session summary            |
-| POST   | `/api/knowledge`                        | Write entry (HTTP clients) |
-| GET    | `/health`                               | Health check               |
+Loopback only (`127.0.0.1`), JSON only. Every request goes through a guard: a foreign `Host` or any `Origin` header gets 403, a request body must be `application/json`. A `:path` with a slash is sent encoded (`notes%2Fx.md`).
+
+| Method | Endpoint                                | Caller                      | Description                                              |
+| ------ | --------------------------------------- | --------------------------- | -------------------------------------------------------- |
+| GET    | `/health`                               | pane, hooks                 | Status, version, entry count                             |
+| GET    | `/api/overview`                         | `/knowledge` pane           | Counts, categories, recent events                        |
+| GET    | `/api/knowledge?category=&tag=`         | pane                        | List entries with their scoring                          |
+| GET    | `/api/knowledge/search?q=&max_results=` | pane, opencode plugin       | Search the knowledge base                                |
+| GET    | `/api/knowledge/:path`                  | pane                        | Read one entry                                           |
+| GET    | `/api/knowledge/:path/links`            | pane                        | The entry's graph edges, each with the other end's title |
+| DELETE | `/api/knowledge/:path`                  | pane                        | Delete an entry (git synced)                             |
+| POST   | `/api/knowledge`                        | agent-tasks KnowledgeBridge | Write an entry (full write pipeline)                     |
+| POST   | `/api/knowledge/sync`                   | pane                        | git pull + push                                          |
+| GET    | `/api/analysis`                         | pane                        | Hubs and isolated entries                                |
+| GET    | `/api/sessions?limit=&offset=&project=` | pane                        | Sessions, paged: `{ sessions, total }`                   |
+| GET    | `/api/sessions/search?q=&role=`         | pane                        | Search sessions                                          |
+| GET    | `/api/sessions/:id/summary`             | pane                        | Session summary                                          |
+| POST   | `/api/events`                           | `sessionend-distill` hook   | A receipt the pane shows                                 |
 
 ## Architecture
 
@@ -268,13 +266,13 @@ graph LR
         KM[Knowledge Module<br/>store / search / git]
         AD[Session Adapters<br/>auto-discovery]
         SE[Search Engine<br/>TF-IDF + Fuzzy]
-        DS[Dashboard<br/>:3423]
+        DS[REST API<br/>127.0.0.1:3423]
         MCP[MCP Server<br/>stdio]
     end
 
     subgraph Clients
         AG[Agent Sessions]
-        WB[Web Browser]
+        PN["/knowledge pane<br/>hooks, agent-tasks"]
     end
 
     KB <-->|git pull/push| KM
@@ -290,7 +288,7 @@ graph LR
     KM --> DS
     SE --> DS
     MCP --> AG
-    DS --> WB
+    DS --> PN
 ```
 
 ## Knowledge Graph
@@ -378,12 +376,12 @@ This enables HTTP-based writes from other services without an MCP connection.
 
 ### agent-tasks KnowledgeBridge
 
-[agent-tasks](https://github.com/keshrath/agent-tasks) has a built-in `KnowledgeBridge` that auto-pushes `learning` and `decision` artifacts to agent-knowledge on task completion. Entries land in `decisions/` with frontmatter tags (`agent-tasks`, project name, artifact type), are auto-indexed with embeddings, and auto-linked to similar entries. No configuration needed — if agent-knowledge is running at `localhost:3423`, it works.
+[agent-tasks](https://github.com/keshrath/agent-tasks) has a built-in `KnowledgeBridge` that auto-pushes `learning` and `decision` artifacts to agent-knowledge on task completion. Entries land in `decisions/` with frontmatter tags (`agent-tasks`, project name, artifact type), are auto-indexed with embeddings, and auto-linked to similar entries. No configuration needed: while any session runs agent-knowledge, its REST API on `127.0.0.1:3423` answers.
 
 ## Testing
 
 ```bash
-npm test              # 563 tests across 35 files
+npm test              # 604 tests across 39 files
 npm run test:watch    # Watch mode
 npm run lint          # ESLint on src/ and tests/
 npm run typecheck     # tsc --noEmit
@@ -404,8 +402,8 @@ All env vars live under the `AGENT_KNOWLEDGE_*` prefix. No host name is baked in
 | `AGENT_KNOWLEDGE_INDEX_VERBATIM`      | `true`              | Index raw session message chunks into the vector store so conversation is retrievable later. Set `false` to save disk at scale.   |
 | `AGENT_KNOWLEDGE_DATA_DIR`            | (platform config)   | Override the primary host data root. Leave unset in the common case — adapters auto-detect every well-known host root under `~/`. |
 | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` | --                  | Extra session directories, comma-separated. Added to whatever auto-detection finds.                                               |
-| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Dashboard HTTP/WebSocket port                                                                                                     |
-| `AGENT_KNOWLEDGE_HOST`                | `127.0.0.1`         | Dashboard bind address (`0.0.0.0` exposes it to the network)                                                                      |
+| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Local REST API port (the `/knowledge` pane, hooks, agent-tasks)                                                                   |
+| `AGENT_KNOWLEDGE_HOST`                | `127.0.0.1`         | REST bind address                                                                                                                 |
 
 ### Embeddings
 
@@ -449,7 +447,7 @@ Project-scoped overrides win over the standard keys. Set either; the scoped form
 - [Setup Guide](docs/SETUP.md) — installation, client setup (Claude Code, OpenCode, Cursor, Windsurf), hooks, skills
 - [Ingestion Guide](docs/INGEST.md) — codebase ingestion skill, tree-sitter extraction, incremental updates
 - [Architecture](docs/ARCHITECTURE.md) — source structure, design principles, database schema
-- [Dashboard](docs/DASHBOARD.md) — web UI views and features
+- [Hooks](docs/HOOKS.md) — the Claude Code lifecycle hooks
 - [Changelog](CHANGELOG.md)
 
 ## License

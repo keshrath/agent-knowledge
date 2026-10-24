@@ -179,9 +179,8 @@ if (!IS_CLAUDE) {
   console.log(`
 Setup complete!
 
-Start the dashboard:  node dist/server.js
 MCP server (stdio):   node dist/index.js
-Dashboard URL:        http://localhost:3423
+REST API:             http://localhost:3423 (served by the first MCP process)
 ${
   IS_OPENCODE
     ? 'OpenCode: the plugin loads automatically on next session start. See docs/SETUP.md#opencode-plugins for env-var tuning.\n'
@@ -227,7 +226,7 @@ function addUnmatchedHook(eventName, marker, command, timeout = 10) {
   console.log(`  ${eventName}: added ${marker} hook`);
 }
 
-// SessionStart: dashboard banner
+// SessionStart: /knowledge banner + L0 identity
 addUnmatchedHook(
   'SessionStart',
   'session-start.js',
@@ -282,7 +281,7 @@ console.log('  Saved settings.json');
 
 console.log('Installing knowledge-ingest skill...');
 
-const skillSrc = join(PROJECT_DIR, 'skills', 'knowledge-ingest', 'SKILL.md');
+const skillSrc = join(PROJECT_DIR, 'plugin', 'skills', 'knowledge-ingest', 'SKILL.md');
 
 const skillDests = [
   join(HOME, '.claude', 'skills', 'knowledge-ingest', 'SKILL.md'),
@@ -307,21 +306,23 @@ if (existsSync(skillSrc)) {
     }
   }
 } else {
-  console.log('  Warning: skills/knowledge-ingest/SKILL.md not found in repo');
+  console.log('  Warning: plugin/skills/knowledge-ingest/SKILL.md not found in repo');
 }
 
 console.log(`
 Setup complete!
 
 Restart Claude Code to load the new MCP server. Every session will now:
-  - Show the knowledge dashboard URL + L0/L1 wakeup payload on start (session-start.js)
+  - Name the /knowledge pane and load the L0 identity on start (session-start.js)
   - Report ingest freshness on start (session-start-ingest.mjs)
   - Inject query-targeted knowledge hits on the first real user prompt (first-prompt-inject.mjs)
   - Flush a rich session summary before compaction (precompact-flush.mjs)
   - Snapshot recent user prompts before compaction (precompact-distill.mjs)
   - Dump a final session summary on exit (sessionend-distill.mjs)
 
-Dashboard: http://localhost:3423 (auto-starts on first MCP connection)
+Browse it: /knowledge in Claude Code, with the plugin installed:
+  claude plugin marketplace add keshrath/agent-knowledge
+  claude plugin install agent-knowledge@agent-knowledge
 Knowledge base: ~/agent-knowledge/ (configurable via AGENT_KNOWLEDGE_MEMORY_DIR)
 
 See docs/HOOKS.md for details and docs/SETUP.md for manual configuration.

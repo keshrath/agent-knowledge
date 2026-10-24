@@ -28,6 +28,27 @@ function extractText(content: unknown): string | null {
   return null;
 }
 
+interface ToolPart {
+  type: 'tool_use' | 'tool_result';
+  name?: unknown;
+  input?: unknown;
+  content?: unknown;
+}
+
+/** The content array's tool_use or tool_result blocks. */
+function toolParts(content: unknown, type: ToolPart['type']): ToolPart[] {
+  if (!Array.isArray(content)) return [];
+  return content.filter(
+    (p: unknown): p is ToolPart =>
+      typeof p === 'object' && p !== null && (p as ToolPart).type === type,
+  );
+}
+
+function toolResultText(part: ToolPart): string {
+  const text = extractText(part.content) ?? JSON.stringify(part.content ?? '');
+  return text.substring(0, 500);
+}
+
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
 export interface SessionEntry {
@@ -109,12 +130,31 @@ export function extractMessages(entries: SessionEntry[]): SessionMessage[] {
     const entryType = entry.type ?? entry.role;
 
     if (entryType === 'user' && entry.message?.content) {
-      const content = extractText(entry.message.content) ?? JSON.stringify(entry.message.content);
-      messages.push({ role: 'user', content, timestamp: ts });
+      const results = toolParts(entry.message.content, 'tool_result');
+      const content = extractText(entry.message.content);
+      if (content) messages.push({ role: 'user', content, timestamp: ts });
+      for (const r of results) {
+        messages.push({ role: 'tool_result', content: toolResultText(r), timestamp: ts });
+      }
+      if (!content && results.length === 0) {
+        messages.push({
+          role: 'user',
+          content: JSON.stringify(entry.message.content),
+          timestamp: ts,
+        });
+      }
     } else if (entryType === 'assistant' && entry.message?.content) {
       const content = extractText(entry.message.content);
       if (content) {
         messages.push({ role: 'assistant', content, timestamp: ts });
+      }
+      // Claude Code nests tool calls in the assistant's content, not as entries of their own.
+      for (const u of toolParts(entry.message.content, 'tool_use')) {
+        messages.push({
+          role: 'tool_use',
+          content: JSON.stringify({ name: u.name, input: u.input }).substring(0, 500),
+          timestamp: ts,
+        });
       }
     } else if (entryType === 'tool_use' || entryType === 'tool_result') {
       const content =

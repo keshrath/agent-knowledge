@@ -84,7 +84,7 @@ export function reflect(dir: string, category?: string, maxEntries: number = 20)
   const prompt = buildReflectionPrompt(unconnected, connected, allEdges.length);
 
   const instructions =
-    'After analyzing the prompt above, call `knowledge_link` for each relationship ' +
+    'After analyzing the prompt above, call `knowledge_graph` with action "link" for each relationship ' +
     'you identify. Use relationship types: related_to, supersedes, depends_on, ' +
     'contradicts, specializes, part_of, alternative_to, builds_on. ' +
     'Set strength between 0.3 (weak) and 0.9 (strong).';
@@ -152,7 +152,7 @@ function buildReflectionPrompt(
   lines.push('   specializes, part_of, alternative_to, builds_on');
   lines.push('4. `strength` — a number between 0.3 and 0.9');
   lines.push('');
-  lines.push('Return your suggestions as a list of `knowledge_link` calls.');
+  lines.push('Return your suggestions as a list of `knowledge_graph` action "link" calls.');
 
   return lines.join('\n');
 }

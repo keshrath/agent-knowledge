@@ -3,7 +3,7 @@
 // =============================================================================
 // agent-knowledge SessionStart hook
 //
-// 1. Announces the knowledge dashboard URL.
+// 1. Says where the person browses the knowledge base (the /knowledge pane).
 // 2. Auto-loads the L0 identity section into the host's additionalContext so
 //    the agent starts each session with "who the user is" already in the
 //    prompt — query-agnostic facts that apply regardless of the first question.
@@ -33,14 +33,13 @@ import { homedir } from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const knowledgePort = process.env.AGENT_KNOWLEDGE_PORT || '3423';
 const autoWakeEnabled =
   (process.env.AGENT_KNOWLEDGE_AUTOWAKE ?? '1').trim().toLowerCase() !== '0' &&
   (process.env.AGENT_KNOWLEDGE_AUTOWAKE ?? '1').trim().toLowerCase() !== 'false';
 const wakeupBudget = Number.parseInt(process.env.AGENT_KNOWLEDGE_WAKEUP_BUDGET ?? '200', 10) || 200;
 
 function emit(additionalContext, statusSuffix) {
-  const base = `agent-knowledge: http://localhost:${knowledgePort}`;
+  const base = 'agent-knowledge: /knowledge';
   const systemMessage = statusSuffix ? `${base} | ${statusSuffix}` : base;
   const msg = {
     systemMessage,
@@ -166,11 +165,11 @@ async function main() {
   // run would skip the very next user prompt.
   const markerCleared = clearFirstPromptMarker(sessionId);
 
-  const dashboardLine = `Knowledge: http://localhost:${knowledgePort}`;
+  const paneLine = 'Knowledge: the person browses the knowledge base in the /knowledge pane.';
 
   const autowakeOffSuffix = markerCleared ? `${source} · inject rearmed` : source;
   if (!autoWakeEnabled) {
-    return emit(dashboardLine, `autowake off · ${autowakeOffSuffix}`);
+    return emit(paneLine, `autowake off · ${autowakeOffSuffix}`);
   }
 
   const { rendered, hasIdentity, bodyChars } = await loadIdentitySection();
@@ -192,11 +191,11 @@ async function main() {
   const onboardingBlock = onboarding === 'pending' ? ONBOARDING_INSTRUCTION : '';
 
   if (!rendered) {
-    return emit(`${dashboardLine}${onboardingBlock}`, suffix);
+    return emit(`${paneLine}${onboardingBlock}`, suffix);
   }
 
   const base = [
-    dashboardLine,
+    paneLine,
     '',
     '--- Knowledge wakeup (identity only; call `knowledge action=wakeup` for L1 facts) ---',
     rendered,

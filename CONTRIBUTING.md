@@ -34,20 +34,24 @@
 # Watch mode — recompiles on changes
 npm run dev
 
-# Start dashboard standalone (port 3423)
-KNOWLEDGE_PORT=3423 node dist/dashboard.js
-
-# Run tests
+# Run tests (each test file gets a scratch HOME: no test reads your real sessions or config)
 npm test
 npm run test:watch
+
+# The Claude Code plugin (/knowledge pane): validate and run its tests
+npm run plugin:check
+
+# Every MCP tool and action through the real Claude Code CLI (needs npm run build
+# and a logged-in claude; scratch HOME, knowledge dir, git remote and port)
+AGENT_KNOWLEDGE_E2E_CLAUDE=1 npx vitest run tests/e2e-claude/mcp.e2e.test.ts
 ```
 
 ### Environment
 
 ```bash
-export KNOWLEDGE_MEMORY_DIR=~/agent-knowledge
-export KNOWLEDGE_DATA_DIR=~/.claude       # primary session dir (other tools auto-detected)
-export KNOWLEDGE_PORT=3423
+export AGENT_KNOWLEDGE_MEMORY_DIR=~/agent-knowledge
+export AGENT_KNOWLEDGE_DATA_DIR=~/.claude   # primary session dir (other tools auto-detected)
+export AGENT_KNOWLEDGE_PORT=3423            # local REST API (the pane, hooks, agent-tasks)
 ```
 
 ## Project Structure
@@ -55,41 +59,30 @@ export KNOWLEDGE_PORT=3423
 ```
 agent-knowledge/
   src/
-    index.ts              Entry point (MCP stdio + dashboard auto-start)
-    server.ts             MCP server, 12 tool definitions, request routing
-    dashboard.ts          HTTP + WebSocket server, REST API, file watcher
+    index.ts              Entry point (MCP stdio; the REST port holder runs the background indexer)
+    server.ts             MCP server, 6 tool definitions, request routing
+    rest-server.ts        REST server on 127.0.0.1, leader election with takeover
+    transport/            rest.ts (routes), http.ts (json, readBody, Router), guard.ts
+    events.ts             Live event ring (POST /api/events)
     types.ts              KnowledgeConfig, getConfig()
-    knowledge/
-      store.ts            Markdown CRUD, frontmatter parsing, path traversal protection
-      search.ts           TF-IDF search over knowledge entries with regex fallback
-      git.ts              git pull/push/sync with timeouts
-    sessions/
-      parser.ts           Multi-format session parsing with mtime-based cache
-      search.ts           TF-IDF ranked search with 60s global index cache
-      scopes.ts           6 search scopes (errors, plans, configs, tools, files, decisions)
-      summary.ts          Session summaries, topic extraction, file path detection
-      adapters/
-        index.ts          SessionAdapter interface, registry, auto-init
-        opencode.ts       OpenCode adapter (SQLite)
-        cline.ts          Cline adapter (JSON)
-        continue.ts       Continue.dev adapter (JSON)
-        aider.ts          Aider adapter (Markdown/JSONL)
-    search/
-      tfidf.ts            TF-IDF scoring engine (tokenizer, stopwords, index)
-      fuzzy.ts            Levenshtein distance, sliding window fuzzy matching
-      types.ts            SearchResult, SearchOptions interfaces
-    ui/
-      index.html          Dashboard SPA
-      styles.css           MD3 design tokens (light + dark)
-      app.js              Client-side vanilla JS (WebSocket, tabs, rendering)
+    knowledge/            store, search, git, graph, scoring, consolidate, reflect, analyze, promote
+    sessions/             parser, indexer, search, scopes, summary, adapters/
+    search/               tfidf, fuzzy, excerpt
+    embeddings/           local, openai, claude, gemini providers
+    vectorstore/          SQLite vector store, chunker
+  plugin/                 Claude Code plugin: .mcp.json, skills/knowledge-ingest, the /knowledge pane mod
+  scripts/
+    hooks/                Claude Code lifecycle hooks (see docs/HOOKS.md)
+    plugins/opencode/     opencode plugin
+    setup.js              Setup wizard
   tests/
-    tfidf.test.ts         TF-IDF engine tests (8)
-    fuzzy.test.ts         Fuzzy matching tests (7)
+    *.test.ts             vitest unit + integration tests (setup-home.ts isolates HOME)
+    hooks/                every hook script, spawned against scratch dirs
+    plugins/              the opencode plugin
+    e2e/                  end-to-end feature suites
+    e2e-claude/           the real Claude Code CLI (skipped unless AGENT_KNOWLEDGE_E2E_CLAUDE=1)
   docs/
-    SETUP.md              Installation and configuration guide
-    ARCHITECTURE.md       Technical architecture documentation
-    DASHBOARD.md          Dashboard features and usage
-    assets/               Screenshots
+    SETUP.md, USER-MANUAL.md, ARCHITECTURE.md, HOOKS.md, INGEST.md
 ```
 
 ## Code Style

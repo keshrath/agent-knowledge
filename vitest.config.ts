@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     testTimeout: 10_000,
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.worktrees/**'],
+    setupFiles: ['tests/setup-home.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.worktrees/**', 'plugin/**'],
   },
 });

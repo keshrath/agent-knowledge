@@ -290,7 +290,20 @@ function fastMeta(filePath: string): SessionMeta | null {
     }
 
     let last: Record<string, unknown> = first!;
-    if (stat.size > headSize) {
+    if (stat.size <= headSize) {
+      // The whole file is in the head: its last timestamped line is the session's end.
+      for (let i = headLines.length - 1; i >= 0; i--) {
+        try {
+          const parsed = JSON.parse(headLines[i]);
+          if (parsed.timestamp) {
+            last = parsed;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+    } else {
       const tailSize = Math.min(4096, stat.size);
       const tailBuf = Buffer.alloc(tailSize);
       fs.readSync(fd, tailBuf, 0, tailSize, stat.size - tailSize);

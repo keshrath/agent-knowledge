@@ -169,7 +169,7 @@ describe('reflect', () => {
     expect(result.prompt).toContain('notes/design.md');
     expect(result.prompt).toContain('Design Patterns');
     expect(result.prompt).toContain('Singleton');
-    expect(result.instructions).toContain('knowledge_link');
+    expect(result.instructions).toContain('`knowledge_graph` with action "link"');
   });
 
   it('filters by category', async () => {

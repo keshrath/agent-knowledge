@@ -2,16 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ensureRepo } from './knowledge/git.js';
 import { RELATIONSHIP_TYPES } from './knowledge/graph.js';
-import { backgroundIndex } from './sessions/indexer.js';
 import { getConfig } from './types.js';
 import { getVersion } from './version.js';
 import { toolHandlers, validateArgs, err, SCOPES } from './tool-handlers.js';
 import { CATEGORIES } from './knowledge/store.js';
-
-export interface ServerOptions {
-  /** Only the leader instance (dashboard owner) runs background indexing. */
-  isLeader?: boolean;
-}
 
 // ── Tool definitions ─────────────────────────────────────────────────────────
 // All six tools are exposed to the LLM. An earlier draft (dropped pre-release)
@@ -439,7 +433,7 @@ export const TOOLS = [
   KNOWLEDGE_ANALYZE_TOOL,
 ] as const;
 
-export function createServer(options?: ServerOptions): Server {
+export function createServer(): Server {
   const server = new Server(
     { name: 'agent-knowledge', version: getVersion() },
     { capabilities: { tools: {} } },
@@ -469,18 +463,6 @@ export function createServer(options?: ServerOptions): Server {
   const startupConfig = getConfig();
   const repoResult = ensureRepo(startupConfig.memoryDir, startupConfig.gitUrl);
   console.error(`[knowledge] Repo init: ${repoResult.message}`);
-
-  if (options?.isLeader !== false) {
-    setTimeout(
-      () =>
-        backgroundIndex().catch((bgErr) =>
-          console.error('[knowledge] Background index failed:', bgErr),
-        ),
-      5000,
-    );
-  } else {
-    console.error('[knowledge] Follower instance -- skipping background indexing');
-  }
 
   return server;
 }

@@ -2,8 +2,8 @@
  * Memory Consolidation — detects near-duplicate knowledge entries using TF-IDF.
  *
  * Two capabilities:
- * 1. On `knowledge_write`, checks for similar existing entries and returns warnings.
- * 2. `knowledge_consolidate` scans a category and groups entries by similarity.
+ * 1. On `knowledge` action "write", checks for similar existing entries and returns warnings.
+ * 2. `knowledge_analyze` action "consolidate" scans a category and groups entries by similarity.
  */
 
 import { TfIdfIndex } from '../search/tfidf.js';

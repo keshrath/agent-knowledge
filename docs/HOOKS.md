@@ -9,7 +9,7 @@ returns an empty JSON object so the user is never blocked.
 
 | Script                     | Event            | Purpose                                                                  |
 | -------------------------- | ---------------- | ------------------------------------------------------------------------ |
-| `session-start.js`         | SessionStart     | Announces dashboard URL + auto-loads wakeup payload into context         |
+| `session-start.js`         | SessionStart     | Names the `/knowledge` pane + auto-loads the L0 identity into context    |
 | `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff   |
 | `first-prompt-inject.mjs`  | UserPromptSubmit | Injects query-targeted knowledge hits on the session's first real prompt |
 | `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context   |
@@ -20,8 +20,9 @@ returns an empty JSON object so the user is never blocked.
 
 Four jobs:
 
-1. Prints the dashboard URL (`http://localhost:3423` by default, override via
-   `AGENT_KNOWLEDGE_PORT`) and injects it into SessionStart `additionalContext`.
+1. Says where the person browses the knowledge base (the `/knowledge` pane of
+   the agent-knowledge plugin), in the `systemMessage` and in SessionStart
+   `additionalContext`.
 2. Auto-loads the **L0 identity** section (who the user is — query-agnostic
    facts from `~/agent-knowledge/identity.md`) into the same
    `additionalContext`, so every session starts with that context without a
@@ -49,17 +50,17 @@ still call `knowledge(action="wakeup")` manually, or flip
 Also emits a user-visible `systemMessage` on every session start with a
 status suffix so the user can always tell the hook ran:
 
-- `agent-knowledge: http://localhost:3423 | identity: 312 chars` — when a
+- `agent-knowledge: /knowledge | identity: 312 chars` — when a
   user-authored `identity.md` was loaded.
-- `agent-knowledge: http://localhost:3423 | identity: onboarding pending` —
+- `agent-knowledge: /knowledge | identity: onboarding pending` —
   when no identity file exists and onboarding is queued (agent will ask
   the user on the next prompt).
-- `agent-knowledge: http://localhost:3423 | identity: declined (delete ~/agent-knowledge/.identity-declined to redo)` —
+- `agent-knowledge: /knowledge | identity: declined (delete ~/agent-knowledge/.identity-declined to redo)` —
   when the user previously opted out.
-- `agent-knowledge: http://localhost:3423 | identity: placeholder (no identity.md) · inject rearmed` —
+- `agent-knowledge: /knowledge | identity: placeholder (no identity.md) · inject rearmed` —
   fallback for edge cases (e.g. stat errors), with `· inject rearmed` when
   the first-prompt-inject marker was cleared.
-- `agent-knowledge: http://localhost:3423 | autowake off · resume` — when
+- `agent-knowledge: /knowledge | autowake off · resume` — when
   `AGENT_KNOWLEDGE_AUTOWAKE=0` disables auto-injection.
 
 The model-facing context and the user-facing line are separate channels —
@@ -70,12 +71,11 @@ pre-loaded and whether the next prompt will trigger query-targeted injection.
 
 | Variable                        | Default | Description                                             |
 | ------------------------------- | ------- | ------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_PORT`          | `3423`  | Dashboard port announced in the context line            |
 | `AGENT_KNOWLEDGE_AUTOWAKE`      | `1`     | Set `0` / `false` to skip the identity auto-injection   |
 | `AGENT_KNOWLEDGE_WAKEUP_BUDGET` | `200`   | Max tokens (chars/4 estimate) for the L0 identity slice |
 
 Requires `npm run build` to have succeeded — if `dist/wakeup.js` is missing,
-only the dashboard-URL line is emitted (fail-open).
+only the `/knowledge` line is emitted (fail-open).
 
 ## session-start-ingest.mjs
 
@@ -170,12 +170,12 @@ A one-line breadcrumb is appended to
 the receipt is durable even when the host tears the transcript down
 before painting the message.
 
-On a successful distill the hook also POSTs the receipt to the dashboard's
-`POST /api/events` endpoint (port from `AGENT_KNOWLEDGE_PORT`, default
-3423). If the dashboard is open, a live toast appears top-right the moment
-the session ends — covers hosts (like Claude Code `/exit`) that swallow
-`systemMessage` on SessionEnd. Fails open on ECONNREFUSED / timeout; set
-`AGENT_KNOWLEDGE_DASHBOARD_EVENTS=0` to suppress the POST entirely.
+On a successful distill the hook also POSTs the receipt to the REST
+server's `POST /api/events` (port from `AGENT_KNOWLEDGE_PORT`, default
+3423), where the `/knowledge` pane picks it up — covers hosts (like Claude
+Code `/exit`) that swallow `systemMessage` on SessionEnd. Fails open on
+ECONNREFUSED / timeout; set `AGENT_KNOWLEDGE_EVENTS=0` to suppress the POST
+entirely.
 
 ## Manual configuration
 

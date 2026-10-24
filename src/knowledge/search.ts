@@ -3,7 +3,7 @@ import path from 'path';
 import { BM25Index } from '../search/bm25.js';
 import { getEntryScoring, computeFinalScore, decayFactor, maturityMultiplier } from './scoring.js';
 import { buildExcerpt } from '../search/excerpt.js';
-import { listEntries, readEntry, KnowledgeEntry } from './store.js';
+import { listEntries, parseFrontmatter, readEntry, KnowledgeEntry } from './store.js';
 import { rerankMMR, jaccardTokenSim } from '../search/mmr.js';
 
 export interface SearchOptions {
@@ -91,6 +91,44 @@ interface KnowledgeIndexCache {
 
 let _knowledgeIndexCache: KnowledgeIndexCache | null = null;
 const KNOWLEDGE_INDEX_TTL = 60_000; // 60 seconds, matching session search cache
+
+/**
+ * An entry body as excerpt text: headings, code blocks (fences and what they hold) and table
+ * separator rows dropped, a paragraph's lines joined, each paragraph and list item one
+ * segment, the segments joined with ` · `.
+ */
+export function excerptText(body: string): string {
+  const parts: string[] = [];
+  let cur = '';
+  let isInFence = false;
+  for (const raw of body.split(/\r?\n/)) {
+    const isFence = /^\s{0,3}(```|~~~)/.test(raw);
+    if (isFence) isInFence = !isInFence;
+    const isSkip =
+      isFence ||
+      isInFence ||
+      !raw.trim() ||
+      /^\s{0,3}#{1,6}\s/.test(raw) ||
+      /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(raw);
+    const isRow = /^\s*\|/.test(raw);
+    if (isSkip || isRow || /^\s*([-*+]|\d+\.)\s+/.test(raw)) {
+      if (cur) parts.push(cur);
+      cur = '';
+    }
+    if (isSkip) continue;
+    // A table row reads as its cells: `| a | b |` is `a, b`.
+    const line = isRow
+      ? raw
+          .split('|')
+          .map((c) => c.trim())
+          .filter(Boolean)
+          .join(', ')
+      : raw.replace(/^\s*(>|[-*+]|\d+\.)\s+/, '').trim();
+    cur = cur ? `${cur} ${line}` : line;
+  }
+  if (cur) parts.push(cur);
+  return parts.join(' · ');
+}
 
 /** Invalidate the knowledge TF-IDF index cache (call on write/delete). */
 export function invalidateKnowledgeIndexCache(): void {
@@ -250,7 +288,10 @@ export function searchKnowledge(
       const res: SearchResult = {
         entry: doc.entry,
         score: finalScore,
-        excerpt: buildExcerpt(doc.content, query, { caseSensitive, contextAfter: 200 }),
+        excerpt: buildExcerpt(excerptText(parseFrontmatter(doc.content).body), query, {
+          caseSensitive,
+          contextAfter: 200,
+        }),
         freshness,
       };
       if (components) res.score_components = components;
@@ -304,7 +345,10 @@ export function searchKnowledge(
       regexResults.push({
         entry: doc.entry,
         score: 1,
-        excerpt: buildExcerpt(doc.content, query, { caseSensitive, contextAfter: 200 }),
+        excerpt: buildExcerpt(excerptText(parseFrontmatter(doc.content).body), query, {
+          caseSensitive,
+          contextAfter: 200,
+        }),
       });
       if (regexResults.length >= maxResults) break;
     }

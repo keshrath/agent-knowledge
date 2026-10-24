@@ -126,14 +126,42 @@ describe('extractMessages', () => {
     expect(msgs[0].content).toContain('Part B.');
   });
 
-  it('skips assistant entries with no text parts', () => {
+  it('turns tool calls nested in an assistant entry into tool_use messages', () => {
     const entries = [
       {
         type: 'assistant',
-        message: { role: 'assistant', content: [{ type: 'tool_use', name: 'read' }] },
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Reading it.' },
+            { type: 'tool_use', id: 't1', name: 'Read', input: { path: 'src/a.ts' } },
+          ],
+        },
       },
     ];
-    expect(extractMessages(entries).length).toBe(0);
+    const msgs = extractMessages(entries);
+    expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool_use']);
+    expect(JSON.parse(msgs[1].content)).toEqual({ name: 'Read', input: { path: 'src/a.ts' } });
+  });
+
+  it('turns tool results nested in a user entry into tool_result messages, not user text', () => {
+    const entries = [
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 't1', content: 'file body' },
+            { type: 'tool_result', tool_use_id: 't2', content: [{ type: 'text', text: 'second' }] },
+          ],
+        },
+      },
+    ];
+    const msgs = extractMessages(entries);
+    expect(msgs).toEqual([
+      { role: 'tool_result', content: 'file body', timestamp: null },
+      { role: 'tool_result', content: 'second', timestamp: null },
+    ]);
   });
 
   it('truncates tool_use content to 500 chars', () => {

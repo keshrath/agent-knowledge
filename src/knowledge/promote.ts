@@ -498,7 +498,7 @@ async function applyPromotion(memoryDir: string, agg: RawAggregate): Promise<str
   // v1.8.1: auto-verify promoter output. The promoter writes from CURRENT
   // session activity — by construction the content reflects fresh signal,
   // so the timestamp is the point of promotion itself. This gives retrieval
-  // + dashboard a trust anchor without requiring any agent-facing action.
+  // a trust anchor without requiring any agent-facing action.
   try {
     getEntryScoring().markVerified(writtenPath);
   } catch (err) {

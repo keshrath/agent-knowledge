@@ -6,7 +6,7 @@
 // opencode's plugin API (@opencode-ai/plugin).
 //
 // Coverage vs. the Claude hook set:
-//   - session.created                → session-start.js (dashboard announce)
+//   - session.created                → session-start.js (announce)
 //   - chat.message                   → first-prompt-inject.mjs (first-prompt KB inject)
 //   - experimental.session.compacting → precompact-flush.mjs (save-context nudge)
 //   - session.deleted                → sessionend-distill.mjs (session summary file)
@@ -24,7 +24,7 @@
 // Env vars (same as the Claude hooks):
 //   AGENT_KNOWLEDGE_MEMORY_DIR            — knowledge base root (default ~/agent-knowledge)
 //   AGENT_KNOWLEDGE_DATA_DIR              — marker/cache dir (default <memory>/.data)
-//   AGENT_KNOWLEDGE_PORT                  — dashboard port for search (default 3423)
+//   AGENT_KNOWLEDGE_PORT                  — REST port for search (default 3423)
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT    — "0" / "false" / "off" to disable inject
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET    — max inject tokens (chars/4, clamped [100,8000])
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS  — max rendered hits (clamped [1,20])
@@ -51,7 +51,7 @@ function markerDir(): string {
   return join(dataDir(), '.first-prompt-seen');
 }
 
-function dashboardUrl(): string {
+function restUrl(): string {
   const port = process.env.AGENT_KNOWLEDGE_PORT || '3423';
   return `http://localhost:${port}`;
 }
@@ -109,7 +109,7 @@ function shouldInject(text: string): boolean {
   return first !== '/' && first !== '!';
 }
 
-// ── Knowledge search via dashboard HTTP ─────────────────────────────────────
+// ── Knowledge search via the REST server ─────────────────────────────────────
 
 type Hit = {
   entry?: { path?: string; category?: string; title?: string };
@@ -122,7 +122,7 @@ type Hit = {
 
 async function searchKnowledge(query: string): Promise<Hit[]> {
   try {
-    const url = new URL(`${dashboardUrl()}/api/knowledge/search`);
+    const url = new URL(`${restUrl()}/api/knowledge/search`);
     url.searchParams.set('q', query);
     url.searchParams.set('max_results', String(maxHits()));
     const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
@@ -259,7 +259,7 @@ export const AgentKnowledgePlugin: Plugin = async ({ client }) => {
             await typedClient.tui?.showToast?.({
               body: {
                 title: 'agent-knowledge',
-                message: `dashboard: ${dashboardUrl()}`,
+                message: `knowledge base: ${memoryDir()}`,
                 variant: 'info',
                 duration: 3000,
               },

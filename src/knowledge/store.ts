@@ -36,7 +36,7 @@ export interface KnowledgeEntry {
   /**
    * Optional free-form author string from frontmatter.
    * Examples: "human", "agent:opencode", "claude-code".
-   * Surfaced in the dashboard card footer.
+   * Shown on the entry's page in the /knowledge pane.
    */
   author?: string;
 }
@@ -74,11 +74,8 @@ export function parseFrontmatter(content: string): {
   return { meta, body: match[2] };
 }
 
-/**
- * Recursively collect all .md files under a directory.
- * Skips directories starting with `.`
- */
-function getAllFiles(dir: string, base: string = ''): string[] {
+/** Every entry's path under `dir` (`base` prefixed): .md files, hidden folders skipped. */
+export function getAllFiles(dir: string, base: string = ''): string[] {
   const results: string[] = [];
   if (!fs.existsSync(dir)) return results;
 

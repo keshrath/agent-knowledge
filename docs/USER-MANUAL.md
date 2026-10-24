@@ -5,7 +5,7 @@
 1. [Overview](#1-overview)
 2. [Installation](#2-installation)
 3. [Configuration](#3-configuration)
-4. [Dashboard Guide](#4-dashboard-guide)
+4. [The /knowledge Pane](#4-the-knowledge-pane)
 5. [MCP Tools Reference](#5-mcp-tools-reference)
 6. [REST API Reference](#6-rest-api-reference)
 7. [Knowledge Base Management](#7-knowledge-base-management)
@@ -35,16 +35,17 @@ agent-knowledge is an MCP (Model Context Protocol) server that provides cross-se
 - **Knowledge analysis** -- find most-connected concepts (god nodes), cross-category bridges, and isolated entries (gaps).
 - **Knowledge brief** -- compact ~200 token summary of the knowledge base state for session-start orientation.
 - **Pre-extracted session insights** -- distillation extracts git commits, error patterns, URLs, and package changes from session transcripts via regex (no LLM cost).
-- **Real-time dashboard** -- web UI showing knowledge entries, sessions, and search results.
+- **`/knowledge` pane** -- the knowledge base beside the conversation in Claude Code (agent-knowledge plugin).
 
 ### Architecture
 
 agent-knowledge has two entry points:
 
-| Entry Point      | File             | Purpose                                                                                   |
-| ---------------- | ---------------- | ----------------------------------------------------------------------------------------- |
-| MCP stdio server | `dist/index.js`  | Communicates with the AI agent via JSON-RPC over stdin/stdout. Auto-starts the dashboard. |
-| HTTP server      | `dist/server.js` | Standalone dashboard + REST API + WebSocket.                                              |
+| Entry Point      | File                  | Purpose                                                                                              |
+| ---------------- | --------------------- | ---------------------------------------------------------------------------------------------------- |
+| MCP stdio server | `dist/index.js`       | Communicates with the AI agent via JSON-RPC over stdin/stdout.                                       |
+| REST server      | `dist/rest-server.js` | Started by the MCP process that holds the port (127.0.0.1:3423); the others take over when it exits. |
+| Claude Code mod  | `plugin/hooks/`       | The `/knowledge` pane, reading the REST API.                                                         |
 
 Internally:
 
@@ -97,7 +98,7 @@ npx agent-knowledge
 
 | Variable                              | Default             | Description                                     |
 | ------------------------------------- | ------------------- | ----------------------------------------------- |
-| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Dashboard HTTP/WebSocket port                   |
+| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Local REST API port                             |
 | `AGENT_KNOWLEDGE_DATA_DIR`            | (platform config)   | Override primary host data root (auto-detected) |
 | `AGENT_KNOWLEDGE_GIT_URL`             | (none)              | Git remote URL for knowledge base sync          |
 | `AGENT_KNOWLEDGE_MEMORY_DIR`          | `~/agent-knowledge` | Local knowledge base directory                  |
@@ -119,7 +120,7 @@ Add to `~/.claude.json`:
 }
 ```
 
-The dashboard auto-starts at http://localhost:3423.
+The first MCP process also serves the local REST API on `127.0.0.1:3423`; in Claude Code, `/knowledge` (agent-knowledge plugin) shows the knowledge base in a pane.
 
 ### Permissions (settings.json)
 
@@ -147,7 +148,7 @@ agent-knowledge ships six lifecycle hook scripts that integrate with Claude Code
 
 | Script                     | Event            | Purpose                                                                   |
 | -------------------------- | ---------------- | ------------------------------------------------------------------------- |
-| `session-start.js`         | SessionStart     | Dashboard URL + auto-loads token-budgeted wakeup payload into context     |
+| `session-start.js`         | SessionStart     | Names the `/knowledge` pane + auto-loads the L0 identity into context     |
 | `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff    |
 | `first-prompt-inject.mjs`  | UserPromptSubmit | Query-targeted knowledge hits injected on the session's first real prompt |
 | `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context    |
@@ -176,60 +177,148 @@ sessions.
 
 ---
 
-## 4. Dashboard Guide
+## 4. The /knowledge Pane
 
-### Accessing the Dashboard
+In Claude Code (2.1.289+), the agent-knowledge plugin adds `/knowledge`: the knowledge base in a pane beside the conversation. Install it with:
 
-The dashboard is available at **http://localhost:3423** (or the port configured via `AGENT_KNOWLEDGE_PORT`).
+```bash
+claude plugin marketplace add keshrath/agent-knowledge
+claude plugin install agent-knowledge@agent-knowledge
+```
 
-### Knowledge Tab
+The pane reads the local REST API (section 6). There is no web dashboard: it was removed in 2.0.
 
-Shows all knowledge base entries organized by category. Each entry card displays:
+Every picture below is from a recorded session in the real Claude Code CLI against a scratch knowledge base (`npm run manual:record`).
 
-- **Title** extracted from the Markdown content or filename.
-- **Category** badge (`projects`, `people`, `decisions`, `workflows`, `notes`).
-- **Tags** from YAML frontmatter.
-- **Maturity** level (`candidate`, `established`, `proven`).
-- **Access count** -- how many times the entry has been read.
-- **Last accessed** timestamp.
+![The /knowledge pane: open it, open an entry, follow a link](images/manual/hero.gif)
 
-Click an entry to view its full Markdown content, related entries (from the knowledge graph), and score data.
+### Opening it
 
-The Knowledge tab header includes analysis buttons:
+| Type                 | Opens                                                                       |
+| -------------------- | --------------------------------------------------------------------------- |
+| `/knowledge`         | Browse, every entry newest first                                            |
+| `/knowledge <words>` | Search, with the hits for the words (entries and past sessions)             |
+| `/knowledge <path>`  | that entry's page; `.md` may be left off (`/knowledge decisions/rest-only`) |
 
-- **Duplicates** — scans entries for near-duplicates (TF-IDF similarity)
-- **Reflect** — finds entries with no graph connections, generates a structured prompt for the agent
-- **God Nodes** — opens a panel showing the most-connected entries (your core concepts)
-- **Bridges** — shows entries that connect different categories with a `why` explanation
-- **Gaps** — lists isolated entries (0-1 edges) sorted by maturity
-- **Brief** — displays the knowledge base summary suitable for session-start orientation
+The command answers in the conversation with the counts (`8 entries · 2 sessions`), how many hits a search found, which entry it opened (`opened REST only, no WebSocket`), or why nothing answers. The pane opens beside the conversation in the fullscreen layout, above the prompt otherwise.
 
-### Sessions Tab
+![Opening the pane](images/manual/open.gif)
 
-Lists discovered sessions from all configured sources (Claude Code, Cursor, OpenCode). Each session shows:
+### Keys
 
-- **Session ID** (UUID).
-- **Project** name.
-- **Message count** and duration.
-- **Last modified** timestamp.
+| Key                 | Does                                                                |
+| ------------------- | ------------------------------------------------------------------- |
+| `1` `2` `3` `4`     | Browse, Search, Sessions, Health                                    |
+| `r`                 | Refresh                                                             |
+| `Tab` / `shift+Tab` | move the focus ring                                                 |
+| `Enter`             | press what holds the ring (open a row, follow a link, fold, delete) |
+| `↑` `↓`             | scroll the pane                                                     |
+| `Esc`               | give the keyboard back to the prompt                                |
+| `ctrl+x tab`        | take it again; the ring is where you left it                        |
 
-Click a session to view its messages.
+The line under the tabs says what the keys do. In a text field (Find, Search) the digits and `r` type into the field; the tab bar drops their numbers and the line says `Tab leaves the field`. With the mouse (fullscreen layout), a click presses a tab, a row or a button.
+
+The same line shows what an action is doing (`searching "zebrafish"…`) and how it went (`✓ synced with the remote`, `✗ sync failed: …`), and clears itself after a few seconds.
+
+### Browse
+
+![Browse](images/manual/browse.png)
+
+Every entry, newest first. Under each title: its category, `evergreen` for entries kept from decay, its maturity once it is past `candidate` (`established`, `proven`), its first tags and how long ago it was updated. Files at the top of the knowledge folder are under `other`. An entry another session writes or deletes shows on the next poll, without a key; the ring stays on the row it held.
+
+![Browse, the whole screen](images/manual/browse-full.png)
+
+The category bar narrows the list; the counts are the knowledge base's.
+
+![A category](images/manual/category.gif)
+
+**Find** narrows by title, path or tag; a row found by a tag says `tag <name>`, and the list is headed **Matches** (`Matches in notes` with a category picked). When nothing matches, the ring is on **Clear the filter**.
+
+![Find](images/manual/find.png)
+
+![Finding by a tag](images/manual/find.gif)
+
+A long list comes 25 rows at a time: `▸ 25 more (n left)` adds the next page and puts the ring on its first row.
+
+### An entry
+
+![An entry](images/manual/entry.png)
+
+Its title, path, category, maturity, how often agents read it and when it was updated; its tags, author and when an agent last read it (reads from the pane do not count). **Links** are its graph edges both ways: `→` it points at another entry, `←` another points at it, with the relation (`depends on`, `related to`, …) and where the link came from when it was not made by hand (`auto-link`). `Enter` on a link opens that entry; `‹` goes back the way you came, with the ring on the link you followed. Dates read as the rows read them up to a week (`2d ago`), then as the date.
+
+![Following a link and back](images/manual/entry.gif)
+
+The body is drawn as Markdown, without its frontmatter (those are the facts above) and without a first heading that only repeats the title. A long body folds after 30 lines: `▸ Show all n lines`.
+
+![Folding a long body](images/manual/fold.gif)
+
+**Delete** is at the end of the page and asks first, with the ring on **Never mind**; the confirmation says what happens: without a git remote the file goes from this machine, with one the deletion is pushed too, and a remote that refuses is said with it (`✓ deleted notes/x.md (not pushed: …)`).
+
+![Delete asks first](images/manual/confirm-delete.png)
+
+![Deleting](images/manual/delete.gif)
 
 ### Search
 
-The search bar performs hybrid search across both knowledge entries and sessions. Results are ranked by relevance combining TF-IDF and semantic similarity scores.
+![Search](images/manual/search.png)
 
-### Stats
+Search finds words, and close spellings, in every entry and in past sessions (Claude Code, Cursor, OpenCode). Best matches first: **Entries** with their category and a line of the text around the match, then **Sessions** with the project, when, whether you asked it or the agent answered, and the line. An excerpt is the entry's text without its headings and code blocks, paragraphs, list items and table rows joined with `·`. The ring lands on the best hit; `Enter` opens it. With no hit the line under the tabs says so: a search typed in the field keeps the ring there to try again, and one run as `/knowledge <words>` leaves the ring on a button, so the next command you type runs as a command.
 
-Displays vector store statistics: total entries, knowledge entries, session entries, database size, embedding provider, and dimensions.
+![Searching and opening a hit](images/manual/search.gif)
 
-### Theme Toggle
+### Sessions
 
-Dark and light themes available. Preference saved in `localStorage`.
+The recent sessions on this machine, newest first: project, when it started, how long it ran, the git branch and the first thing asked. A session opens on its summary: what was asked, files changed, commits, errors (in red) and the tools used.
 
-### Real-Time Updates
+![A session's summary](images/manual/session.png)
 
-The dashboard connects via WebSocket. On connect, it receives the full state snapshot. A file watcher monitors the UI directory for hot-reload during development. The state snapshot is cached for 30 seconds to avoid expensive disk and database scans.
+![Sessions](images/manual/sessions.gif)
+
+### Health
+
+![Health](images/manual/health.png)
+
+How many entries (by category) and sessions there are, whether search uses meaning too (`words and meaning: n vectors`) or words only, where the knowledge folder is and whether a git remote syncs it. **Sync now** (shown with a remote) pulls and pushes. **Analyze links** lists the most linked entries (two links or more) and, apart from them, the ones with one link or none: those are the entries nothing much leads to. The folder is cut from the left to fit (`…\knowledge`). **Recent activity** lists what the hooks reported, such as a session distilled at its end.
+
+![Analyzing the links](images/manual/health.gif)
+
+### Status line, toasts and what the model sees
+
+The status line under the prompt reads `agent-knowledge: 8 entries · 2 sessions`, from the moment a session starts; `offline` when nothing answers, `old server x on the port` when an agent-knowledge from before the pane does.
+
+A live event (a session distilled at its end) is toasted once, beside the conversation, and listed under Health.
+
+![A toast](images/manual/toast.png)
+
+The model is told, once per conversation, what the knowledge base holds (`agent-knowledge holds 8 entries · 2 sessions (projects 2, …)`), to search it before saying something is unknown, and that you browse it in `/knowledge`.
+
+### Layouts
+
+Docked in the fullscreen layout the pane takes the right side of the window; on a narrow window it is about 40 columns wide and its tab bar wraps between two tabs. Without the fullscreen layout it opens above the prompt.
+
+![Docked narrow](images/manual/narrow.png)
+
+![Above the prompt](images/manual/inline.png)
+
+### When the server is away
+
+One agent-knowledge MCP process serves the REST API on `127.0.0.1:3423`; when its session ends another one takes the port over within a few seconds. While nothing answers, the pane says so and offers only **Refresh**; it comes back by itself on the next poll.
+
+![The server away](images/manual/server-down.png)
+
+![The server away and back](images/manual/server-down.gif)
+
+### Troubleshooting
+
+| You see                                         | Do                                                                                                                      |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `The agent-knowledge server is not reachable`   | Check in `/mcp` that agent-knowledge is connected; `AGENT_KNOWLEDGE_PORT` must be the same for the pane and the server. |
+| `An older agent-knowledge (1.x) holds the port` | End the sessions (or the process) still running 1.x; a current one takes the port over. Then **Refresh**.               |
+| `words only: no embeddings yet`                 | Search still works; for meaning too, configure an embedding provider (section 3).                                       |
+| `no remote: entries stay on this machine`       | Set `AGENT_KNOWLEDGE_GIT_URL` or make the knowledge folder a git clone.                                                 |
+| `pane not shown: …` after `/knowledge`          | The window is too narrow for a docked pane; widen it or leave the fullscreen layout.                                    |
+
+The pictures are recorded with `npm run manual:record` (needs `npm run build` and a logged-in `claude`; it makes no model calls). `npm run manual:record -- health` writes only the pictures whose name contains `health`.
 
 ---
 
@@ -746,7 +835,7 @@ knowledge_analyze with action "search_gaps", since_days 7, min_count 3
 
 ## 6. REST API Reference
 
-The REST API is served by the dashboard. All endpoints are loopback only: foreign `Host`/`Origin` headers get 403, request bodies must be `application/json`, no wildcard CORS. Rate limited: 100 requests/minute general, 20 requests/minute for search/analyze endpoints.
+The first MCP process serves a local REST API on `127.0.0.1:3423` (`AGENT_KNOWLEDGE_PORT`); the other sessions retry the port and take it over when that process exits. It is what the `/knowledge` pane, the hook scripts, the opencode plugin and agent-tasks call. Loopback only: a foreign `Host` or any `Origin` header gets 403, request bodies must be `application/json`, no CORS. A `:path` with a slash is sent encoded (`projects%2Fbackend.md`).
 
 ### Health
 
@@ -757,54 +846,29 @@ GET  /health                              Status, version, uptime, knowledge ent
 ### Knowledge Entries
 
 ```
-GET  /api/knowledge                       List entries (?category=&tag=)
-GET  /api/knowledge/:path                 Read entry content (enriched with score data)
-GET  /api/knowledge/:path/links           Get graph edges for an entry
-GET  /api/knowledge/search                Search entries (?q=&category=&max_results=)
-GET  /api/knowledge/consolidate           Find duplicates (?category=&threshold=)
-GET  /api/knowledge/reflect               Find unconnected entries (?category=&max_entries=)
-GET  /api/knowledge/god-nodes             Most-connected entries (?top_n=)
-GET  /api/knowledge/bridges               Cross-category connectors (?top_n=)
-GET  /api/knowledge/gaps                  Isolated entries (?max_entries=)
-GET  /api/knowledge/brief                 Cached knowledge base brief
+GET     /api/overview                     Counts, categories, recent events (the pane)
+GET     /api/knowledge                    List entries with scoring (?category=&tag=)
+GET     /api/knowledge/search             Search entries (?q=&category=&max_results=)
+GET     /api/knowledge/:path              Read entry content (enriched with score data); 404 when missing
+GET     /api/knowledge/:path/links        Graph edges for an entry, each with the other end's title
+DELETE  /api/knowledge/:path              Delete an entry (git synced)
+POST    /api/knowledge                    Write an entry: { category, filename, content } -> 201 { path, git, autoLinks?, duplicateWarnings? }
+POST    /api/knowledge/sync               git pull + push
+GET     /api/analysis                     Hubs and isolated entries (the pane)
 ```
-
-### `GET /api/knowledge/god-nodes`
-
-Query params: `top_n` (number, default 10).
-
-Returns: same as `knowledge_analyze(action: "god_nodes")`.
-
-### `GET /api/knowledge/bridges`
-
-Query params: `top_n` (number, default 5).
-
-Returns: same as `knowledge_analyze(action: "bridges")`.
-
-### `GET /api/knowledge/gaps`
-
-Query params: `max_entries` (number, default 30).
-
-Returns: same as `knowledge_analyze(action: "gaps")`.
-
-### `GET /api/knowledge/brief`
-
-No query params. Returns the cached knowledge brief.
 
 ### Sessions
 
 ```
-GET  /api/sessions                        List sessions (?project=&limit=&offset=)
-GET  /api/sessions/:id                    Get session messages (?project=&include_tools=&tail=)
-GET  /api/sessions/:id/summary            Get session summary (?project=)
+GET  /api/sessions                        Sessions, paged: { sessions, total } (?project=&limit=&offset=; limit default 50, max 500)
 GET  /api/sessions/search                 Search sessions (?q=&role=&max_results=&ranked=&project=&semantic=)
-GET  /api/sessions/recall                 Scoped recall (?scope=&q=&max_results=&project=)
+GET  /api/sessions/:id/summary            Session summary (?project=); 404 when unknown
 ```
 
-### Index Status
+### Events
 
 ```
-GET  /api/index-status                    Vector store statistics
+POST /api/events                          { kind, message } -> 201 { id, ts }: a receipt the /knowledge pane shows (the sessionend hook)
 ```
 
 ### Example Requests
@@ -817,16 +881,13 @@ curl http://localhost:3423/health
 curl http://localhost:3423/api/knowledge
 
 # Read a specific entry
-curl http://localhost:3423/api/knowledge/projects/backend.md
+curl http://localhost:3423/api/knowledge/projects%2Fbackend.md
 
 # Search knowledge
 curl "http://localhost:3423/api/knowledge/search?q=authentication&max_results=5"
 
 # Search sessions
 curl "http://localhost:3423/api/sessions/search?q=deploy+error&role=assistant&max_results=10"
-
-# Scoped recall
-curl "http://localhost:3423/api/sessions/recall?scope=errors&q=ECONNREFUSED"
 
 # List sessions for a project
 curl "http://localhost:3423/api/sessions?project=backend&limit=20"
@@ -983,14 +1044,14 @@ If no provider is available, search falls back to pure TF-IDF.
 
 ## 9. Troubleshooting
 
-### Dashboard Won't Start
+### The /knowledge pane says the server is not reachable
 
-**Symptom:** Port 3423 already in use.
+**Cause:** no running session serves the REST API, or something other than agent-knowledge holds port 3423.
 
 **Solutions:**
 
-1. Set `AGENT_KNOWLEDGE_PORT=3424` in the MCP config env.
-2. Multiple MCP instances share the same database. Only one serves the dashboard.
+1. Check in `/mcp` that agent-knowledge is connected: the first MCP process serves the port, and when it exits another session takes it over within about 5 seconds.
+2. If another program holds 3423, set `AGENT_KNOWLEDGE_PORT=3424` for the MCP server and the pane alike.
 
 ### Search Returns No Results
 

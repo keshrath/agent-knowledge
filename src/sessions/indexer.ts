@@ -15,11 +15,17 @@ import { promote } from '../knowledge/promote.js';
 
 let _vectorStore: VectorStore | null = null;
 
-function getVectorStore(): VectorStore {
+/** The process's one vector store: the indexer and the REST routes share its connection. */
+export function getVectorStore(): VectorStore {
   if (!_vectorStore) {
     _vectorStore = new VectorStore();
   }
   return _vectorStore;
+}
+
+export function closeVectorStore(): void {
+  _vectorStore?.close();
+  _vectorStore = null;
 }
 
 /**

@@ -18,7 +18,7 @@ Detailed instructions for installing, configuring, and integrating agent-knowled
   - [Cursor and Windsurf](#cursor-and-windsurf)
 - [Knowledge Base Setup](#knowledge-base-setup)
 - [Environment Variables](#environment-variables)
-- [Dashboard](#dashboard)
+- [The /knowledge pane](#the-knowledge-pane)
 - [Multi-Machine Sync](#multi-machine-sync)
 - [Session Sources](#session-sources)
 - [Session Auto-Distillation](#session-auto-distillation)
@@ -158,7 +158,7 @@ claude mcp list
 
 ### REST API
 
-If your tool doesn't support MCP, use the REST API:
+If your tool doesn't support MCP, use the local REST API (served on `127.0.0.1:3423` while any session runs the MCP server; loopback only, JSON only, no `Origin` header):
 
 ```bash
 # List entries
@@ -167,13 +167,13 @@ curl http://localhost:3423/api/knowledge
 # Search
 curl 'http://localhost:3423/api/knowledge/search?q=deployment+pipeline'
 
-# Read an entry
-curl http://localhost:3423/api/knowledge/projects/my-project
+# Read an entry (the slash in the path sent encoded)
+curl http://localhost:3423/api/knowledge/projects%2Fmy-project.md
 
 # Write an entry
-curl -X PUT http://localhost:3423/api/knowledge/notes/my-note \
+curl -X POST http://localhost:3423/api/knowledge \
   -H 'Content-Type: application/json' \
-  -d '{"content": "---\ntitle: My Note\ntags: [example]\n---\n\nContent here."}'
+  -d '{"category": "notes", "filename": "my-note", "content": "---\ntitle: My Note\ntags: [example]\n---\n\nContent here."}'
 ```
 
 ---
@@ -184,7 +184,7 @@ agent-knowledge ships **6 hook scripts** that wire into Claude Code's lifecycle 
 
 | Hook                       | Event            | Purpose                                                                          |
 | -------------------------- | ---------------- | -------------------------------------------------------------------------------- |
-| `session-start.js`         | SessionStart     | Dashboard URL + auto-loads token-budgeted wakeup payload into context            |
+| `session-start.js`         | SessionStart     | Names the `/knowledge` pane + auto-loads the L0 identity into context            |
 | `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff           |
 | `first-prompt-inject.mjs`  | UserPromptSubmit | v1.8 — query-targeted knowledge hits injected on the session's first real prompt |
 | `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context           |
@@ -289,7 +289,7 @@ Mirrors the Claude Code hooks where opencode has an equivalent event:
 
 | Claude Code hook          | OpenCode analog                   | Behavior                                                              |
 | ------------------------- | --------------------------------- | --------------------------------------------------------------------- |
-| `session-start.js`        | `event: session.created`          | Dashboard URL toast + clears stale first-prompt marker on resume.     |
+| `session-start.js`        | `event: session.created`          | Knowledge-base toast + clears stale first-prompt marker on resume.    |
 | `first-prompt-inject.mjs` | `chat.message`                    | Searches the KB and prepends a rendered hits block to the user parts. |
 | `precompact-flush.mjs`    | `experimental.session.compacting` | Pushes a "save unsaved knowledge before compaction" nudge.            |
 | `sessionend-distill.mjs`  | `event: session.deleted`          | Writes `~/agent-knowledge/projects/session-opencode-<slug>.md`.       |
@@ -304,14 +304,14 @@ Not ported (opencode has no equivalent surface):
 
 Same as the Claude hooks, all optional:
 
-| Variable                               | Default             | Description                                              |
-| -------------------------------------- | ------------------- | -------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_MEMORY_DIR`           | `~/agent-knowledge` | Knowledge base root.                                     |
-| `AGENT_KNOWLEDGE_DATA_DIR`             | `<memory>/.data`    | Marker/cache dir (first-prompt-seen markers live here).  |
-| `AGENT_KNOWLEDGE_PORT`                 | `3423`              | Dashboard port (plugin queries `/api/knowledge/search`). |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`                 | Set `0` / `false` / `off` to disable inject entirely.    |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`               | Max inject tokens (chars/4), clamped `[100, 8000]`.      |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`                 | Max rendered hits, clamped `[1, 20]`.                    |
+| Variable                               | Default             | Description                                             |
+| -------------------------------------- | ------------------- | ------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`           | `~/agent-knowledge` | Knowledge base root.                                    |
+| `AGENT_KNOWLEDGE_DATA_DIR`             | `<memory>/.data`    | Marker/cache dir (first-prompt-seen markers live here). |
+| `AGENT_KNOWLEDGE_PORT`                 | `3423`              | REST port (plugin queries `/api/knowledge/search`).     |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`                 | Set `0` / `false` / `off` to disable inject entirely.   |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`               | Max inject tokens (chars/4), clamped `[100, 8000]`.     |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`                 | Max rendered hits, clamped `[1, 20]`.                   |
 
 Every hook fails open — errors during search, toast, session walk, or disk write are swallowed and the user is never blocked.
 
@@ -372,7 +372,7 @@ Before ending a session, save non-obvious learnings to agent-knowledge:
 1. `knowledge_search` for existing entries that overlap with this session's work.
 2. `knowledge { action: "write" }` new entries for decisions, architecture changes, or error patterns
    that aren't already captured.
-3. `knowledge_link` related entries together.
+3. Link related entries together with `knowledge_graph` action `link`.
 
 Categories: projects (project context), decisions (trade-offs made), workflows (processes),
 notes (everything else).
@@ -402,7 +402,7 @@ agent-knowledge ships a **knowledge-ingest** skill for bootstrapping or updating
 
 ### Manual installation
 
-Copy `skills/knowledge-ingest/SKILL.md` to any of these locations:
+Copy `plugin/skills/knowledge-ingest/SKILL.md` to any of these locations:
 
 ```bash
 # Claude Code, OpenCode, Cursor
@@ -469,8 +469,8 @@ Architecture notes, deployment info, etc.
 | `AGENT_KNOWLEDGE_DATA_DIR`                                | (platform config)   | Override primary host data root (adapters auto-detect otherwise) |
 | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS`                     | --                  | Additional session directories, comma-separated                  |
 | `OPENCODE_DATA_DIR`                                       | (platform default)  | Override OpenCode data dir (default `~/.local/share/opencode`)   |
-| `AGENT_KNOWLEDGE_PORT`                                    | `3423`              | Dashboard HTTP/WebSocket port                                    |
-| `AGENT_KNOWLEDGE_HOST`                                    | `127.0.0.1`         | Dashboard bind address (`0.0.0.0` exposes it to the network)     |
+| `AGENT_KNOWLEDGE_PORT`                                    | `3423`              | Local REST API port (the `/knowledge` pane, hooks, agent-tasks)  |
+| `AGENT_KNOWLEDGE_HOST`                                    | `127.0.0.1`         | REST bind address                                                |
 | `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider (local, openai, claude, gemini)               |
 | `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.5`               | Blend weight for semantic vs TF-IDF search (0-1)                 |
 | `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | —                   | Idle timeout for embedding worker (ms)                           |
@@ -496,13 +496,16 @@ $env:AGENT_KNOWLEDGE_MEMORY_DIR = "$env:USERPROFILE\agent-knowledge"
 
 ---
 
-## Dashboard
+## The /knowledge pane
 
-Auto-starts with the MCP server at **http://localhost:3423**.
+In Claude Code (2.1.289+), install the plugin and type `/knowledge`:
 
-4 tabs: Knowledge, Search, Sessions, Embeddings. Supports light/dark theme.
+```bash
+claude plugin marketplace add keshrath/agent-knowledge
+claude plugin install agent-knowledge@agent-knowledge
+```
 
-Live reload: edit files in `src/ui/` and the browser refreshes automatically.
+The pane opens beside the conversation and reads the local REST API, which the first running MCP process serves on `127.0.0.1:3423`; when that session exits, another one takes the port over. There is no web dashboard (removed in 2.0).
 
 ---
 
@@ -524,7 +527,7 @@ cd ~/agent-knowledge && git pull && git push  # Should work without prompts
 
 ## Session Sources
 
-agent-knowledge auto-discovers sessions from all major AI coding assistants. If a tool is installed on your machine, its sessions appear automatically in search results and the dashboard Sessions tab.
+agent-knowledge auto-discovers sessions from all major AI coding assistants. If a tool is installed on your machine, its sessions appear automatically in search results and in the `/knowledge` pane.
 
 | Tool             | Format         | Auto-detected path                                              | Override                              |
 | ---------------- | -------------- | --------------------------------------------------------------- | ------------------------------------- |
@@ -557,12 +560,14 @@ To manually save knowledge from any client, use `knowledge` with `action: "write
 
 ### Port already in use
 
+One MCP process serves the REST API; the others wait for the port, so a port held by another agent-knowledge is normal. If something else holds it:
+
 ```bash
 # Find the process
 netstat -ano | findstr :3423   # Windows
 lsof -i :3423                  # Linux/macOS
 
-# Use a different port
+# Use a different port (for the MCP server and the pane alike)
 export AGENT_KNOWLEDGE_PORT=3424
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "1.9.8",
+  "version": "2.0.0",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -26,17 +26,14 @@
   "files": [
     "dist/",
     "scripts/",
-    "skills/",
-    ".claude-plugin/",
-    ".mcp.json",
-    "agent-desk-plugin.json",
+    "plugin/skills/",
     "docs/*.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && node scripts/copy-ui.js",
+    "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
@@ -52,8 +49,11 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "plugin:check": "claude plugin validate plugin && claude plugin test plugin",
     "clean": "rm -rf dist",
-    "prepare": "husky"
+    "prepare": "husky",
+    "e2e:claude": "npm run build && node tests/e2e-claude/run.mjs",
+    "manual:record": "npm run build && tsx tests/e2e-claude/manual.ts"
   },
   "keywords": [
     "mcp",
@@ -84,25 +84,28 @@
   "homepage": "https://github.com/keshrath/agent-knowledge#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "agent-common": "^1.1.2",
     "better-sqlite3": "^12.8.0",
-    "morphdom": "^2.7.8",
     "sqlite-vec": "^0.1.0",
     "tree-sitter-wasms": "^0.1.13",
-    "vis-data": "^8.0.3",
-    "vis-network": "^10.0.2",
-    "web-tree-sitter": "^0.24.7",
-    "ws": "^8.20.0"
+    "web-tree-sitter": "^0.24.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^25.5.0",
+    "@types/pngjs": "^6.0.5",
     "@types/stream-json": "^1.7.8",
-    "@types/ws": "^8.18.1",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/headless": "^6.0.0",
+    "@xterm/xterm": "^6.0.0",
     "eslint": "^10.1.0",
+    "gifenc": "^1.0.3",
     "husky": "^9.0.0",
     "lint-staged": "^16.0.0",
+    "node-pty": "^1.1.0",
+    "pngjs": "^7.0.0",
     "prettier": "^3.8.1",
     "stream-json": "^2.1.0",
     "tsx": "^4.21.0",

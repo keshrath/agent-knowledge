@@ -375,7 +375,7 @@ export function staleByCodeActivity(options: FreshnessOptions = {}): StalenessSi
   }
 
   // Sort highest-confidence first — that's the "probably stale, look here"
-  // queue ordering the agent or dashboard should honour.
+  // queue ordering the agent should honour.
   signals.sort((a, b) => b.confidence - a.confidence);
   return signals;
 }
