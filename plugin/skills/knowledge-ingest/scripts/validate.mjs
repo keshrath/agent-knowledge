@@ -134,7 +134,7 @@ function main() {
     if (cache.files && typeof cache.files === 'object') {
       let missingHashes = 0;
       let missingEntryRefs = 0;
-      for (const [filePath, meta] of Object.entries(cache.files)) {
+      for (const meta of Object.values(cache.files)) {
         if (!meta.sha256 || typeof meta.sha256 !== 'string' || meta.sha256.length !== 64) {
           missingHashes++;
         }
@@ -163,7 +163,7 @@ function main() {
     issues,
   };
 
-  console.log(JSON.stringify(report, null, 2));
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   process.exit(issues.length === 0 ? 0 : 1);
 }
 

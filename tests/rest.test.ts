@@ -9,7 +9,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import type { RestServer } from '../src/rest-server.js';
+// Imported at collection, not in beforeAll: transforming the server's module graph takes seconds
+// under load and would count against the hook timeout. Config is read per call, so the env the
+// hook sets still applies.
+import { startRestServer, type RestServer } from '../src/rest-server.js';
 
 const ENV_KEYS = [
   'HOME',
@@ -101,7 +104,6 @@ beforeAll(async () => {
     ].join('\n') + '\n',
   );
 
-  const { startRestServer } = await import('../src/rest-server.js');
   server = await startRestServer(0);
   base = `http://127.0.0.1:${server.port}`;
 });
@@ -153,14 +155,15 @@ describe('request guard', () => {
 });
 
 describe('GET /health', () => {
-  it('reports ok, the package version and the entry count', async () => {
+  it('reports ok, the package version and the counts', async () => {
     const res = await get('/health');
     expect(res.status).toBe(200);
     const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     expect(await res.json()).toMatchObject({
       status: 'ok',
       version: pkg.version,
-      knowledge_entries: 2,
+      entries: 2,
+      snapshots: 0,
     });
   });
 });

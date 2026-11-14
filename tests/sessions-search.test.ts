@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { searchSessions } from '../src/sessions/search.js';
 import * as parser from '../src/sessions/parser.js';
+import { resetProvider } from '../src/embeddings/factory.js';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-ssearch-test-'));
@@ -22,6 +23,12 @@ describe('searchSessions', () => {
   let tmpDir: string;
 
   beforeEach(() => {
+    // No embeddings, said outright: a provider with no key. The default (local) would load a
+    // model, and fetch it when not cached: seconds, and the network, in a unit test.
+    vi.stubEnv('AGENT_KNOWLEDGE_EMBEDDING_PROVIDER', 'openai');
+    vi.stubEnv('AGENT_KNOWLEDGE_OPENAI_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+    resetProvider();
     tmpDir = makeTmpDir();
     const projectDir = path.join(tmpDir, 'my-project');
     fs.mkdirSync(projectDir, { recursive: true });
@@ -89,6 +96,8 @@ describe('searchSessions', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    resetProvider();
     cleanup(tmpDir);
   });
 
@@ -205,23 +214,15 @@ describe('searchSessions', () => {
 
   // ── Semantic fallback ──────────────────────────────────────────────────
 
-  it(
-    'semantic: true falls back gracefully when no embeddings available',
-    { timeout: 30_000 },
-    async () => {
-      const results = await searchSessions('TypeScript', { semantic: true });
-      expect(results.length).toBeGreaterThanOrEqual(1);
-      expect(results[0].score).toBeGreaterThan(0);
-    },
-  );
+  it('semantic: true falls back gracefully when no embeddings available', async () => {
+    const results = await searchSessions('TypeScript', { semantic: true });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0].score).toBeGreaterThan(0);
+  });
 
-  it(
-    'default behavior returns results when no vector store exists',
-    { timeout: 30_000 },
-    async () => {
-      const results = await searchSessions('TypeScript');
-      expect(results.length).toBeGreaterThanOrEqual(1);
-      expect(results[0].score).toBeGreaterThan(0);
-    },
-  );
+  it('default behavior returns results when no vector store exists', async () => {
+    const results = await searchSessions('TypeScript');
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0].score).toBeGreaterThan(0);
+  });
 });

@@ -9,9 +9,11 @@ import type {
   AgentKnowledgeEntry,
   AgentKnowledgeEvent,
   AgentKnowledgeHit,
+  AgentKnowledgeIngest,
   AgentKnowledgeLink,
   AgentKnowledgeOverview,
   AgentKnowledgePage,
+  AgentKnowledgePin,
   AgentKnowledgeRoute,
   AgentKnowledgeSearch,
   AgentKnowledgeSessionPage,
@@ -20,7 +22,7 @@ import type {
 } from '../types';
 
 /** The elements the pane draws with; mobile has no `Input`. */
-export type El = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Markdown'> &
+export type El = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Markdown' | 'Progress'> &
   Partial<Pick<Elements['terminal'], 'Input'>>;
 
 export type Actions = {
@@ -32,9 +34,13 @@ export type Actions = {
   back: () => void;
   pickCategory: (category: string) => void;
   filter: (text: string) => void;
+  /** Narrows the Browse list as the person types in Find, the ring staying in the field. */
+  narrow: (text: string) => void;
   clearFilter: () => void;
   more: () => void;
   search: (query: string) => void;
+  /** A key typed into the Search field: only when, so a poll does not redraw above it. */
+  typing: (text: string) => void;
   /** Unfolds or folds a part of a page (`foldKey`). */
   toggle: (part: string) => void;
   askDelete: (path: string) => void;
@@ -42,6 +48,10 @@ export type Actions = {
   dismiss: () => void;
   sync: () => void;
   analyze: () => void;
+  /** Loads the next page of One link or none. */
+  analyzeMore: () => void;
+  /** Puts `/knowledge-ingest <folder>` in the prompt: the person runs it with Enter. */
+  ingest: () => void;
 };
 
 // Theme keys, so the pane follows the person's theme (light, dark, colorblind).
@@ -121,7 +131,7 @@ export function parse(ts: string): Date {
 
 const isDay = (ts: string) => /^\d{4}-\d\d-\d\d$/.test(ts);
 
-/** Local time: HH:MM today, MM-DD HH:MM before; a bare day as YYYY-MM-DD. */
+/** Local time: HH:MM today, YYYY-MM-DD HH:MM before (never a month and day alone); a bare day as is. */
 export function time(ts: string, now = new Date()): string {
   if (isDay(ts)) return ts;
   const d = parse(ts);
@@ -129,7 +139,7 @@ export function time(ts: string, now = new Date()): string {
   const clock = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   return d.toDateString() === now.toDateString()
     ? clock
-    : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${clock}`;
+    : `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${clock}`;
 }
 
 /**
@@ -157,7 +167,8 @@ export function ago(ts: string, now = Date.now()): string {
   if (min < 1) return 'now';
   if (min < 60) return `${min}m`;
   const h = Math.floor(min / 60);
-  return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
+  // From a day on in days, as a bare day reads: 1d, not 26h.
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
 /** The categories in the order the knowledge base names them, other folders, then `other` (files at the top). */
@@ -171,7 +182,10 @@ export function categoryOrder(counts: Record<string, number>): string[] {
   return [...CATEGORIES.filter((c) => (counts[c] ?? 0) > 0), ...extra, ...top];
 }
 
-/** The summary as text: the status line entry reads the same. */
+/** A category as the pane names it: the snapshots folder is `snapshots`, not a second `sessions`. */
+export const catLabel = (c: string) => (c === SNAPSHOTS ? 'snapshots' : c);
+
+/** The summary as text: the status line entry reads the same; entries as `all` counts them. */
 export function headline(o: Pick<AgentKnowledgeOverview, 'entries' | 'sessions'>): string {
   return `${count(o.entries, 'entry', 'entries')} · ${plural(o.sessions, 'session')}`;
 }
@@ -179,15 +193,46 @@ export function headline(o: Pick<AgentKnowledgeOverview, 'entries' | 'sessions'>
 const needle = (q: string) => q.trim().toLowerCase();
 
 /** The Browse filter: text found in the title, path or tags. */
+/** Find's test: every word of it in the entry's title, path or tags ("gotcha windows"). */
 export function matches(e: AgentKnowledgeEntry, query: string): boolean {
-  const q = needle(query);
-  if (!q) return true;
-  return [e.title, e.path, ...e.tags].some((v) => v.toLowerCase().includes(q));
+  const words = needle(query).split(/\s+/).filter(Boolean);
+  const text = [e.title, e.path, ...e.tags].join('\n').toLowerCase();
+  return words.every((w) => text.includes(w));
 }
 
+/** The folder session snapshots go in: their own category, left out of `all`. */
+export const SNAPSHOTS = 'sessions';
+
 /** What Browse lists: `list` narrowed to `category` ('all' for every one) and `filter`. */
-export const browseRows = (list: AgentKnowledgeEntry[], category: string, filter: string) =>
-  list.filter((e) => (category === 'all' || e.category === category) && matches(e, filter));
+export const browseRows = (
+  list: AgentKnowledgeEntry[],
+  category: string,
+  filter: string,
+  pinned: AgentKnowledgePin | null = null,
+) =>
+  pinOrder(
+    list.filter(
+      (e) =>
+        (category === 'all' ? e.category !== SNAPSHOTS : e.category === category) &&
+        matches(e, filter),
+    ),
+    pinned?.view === pinView(category, filter) ? pinned.paths : null,
+  );
+
+/** The view an order is kept for: a category and a Find. */
+export const pinView = (category: string, filter: string) => `${category}\n${filter}`;
+
+/**
+ * `rows` in the order `pinned` drew them, the ones it does not hold after, as they came: a
+ * poll then never moves a row under the ring while the pane holds the keyboard (/pipeline's
+ * pinOrder, by path).
+ */
+export function pinOrder<T extends { path: string }>(rows: T[], pinned: string[] | null): T[] {
+  if (!pinned) return rows;
+  const at = new Map(pinned.map((path, i) => [path, i]));
+  const held = rows.filter((r) => at.has(r.path)).sort((a, b) => at.get(a.path)! - at.get(b.path)!);
+  return [...held, ...rows.filter((r) => !at.has(r.path))];
+}
 
 /**
  * An entry's body as the page draws it: the frontmatter is its facts, and a first heading
@@ -210,13 +255,45 @@ export function homeAsTilde(path: string, home: string | undefined): string {
   return isUnder ? `~${path.slice(home.replace(/[\\/]+$/, '').length)}` : path;
 }
 
-/** A path cut from the left at a separator to fit `n` columns: `…\agent-knowledge`. */
-export function clipPath(path: string, n: number): string {
-  if (cols(path) <= n) return path;
-  const seps = [...path.matchAll(/[\\/]/g)].map((m) => m.index!);
-  const at = seps.find((i) => cols(path.slice(i)) + 1 <= n);
-  return at === undefined ? clip(path, n) : `…${path.slice(at)}`;
+/** How many hits a search shows at most: entries, and messages of past sessions. */
+export const ENTRY_HITS = 15;
+export const SESSION_HITS = 10;
+/** One link or none comes this many at a time (GET /api/analysis `limit`). */
+export const ANALYSIS_PAGE = 30;
+
+/** What a live event's kind says to a person. */
+export const eventWords = (kind: string) =>
+  ({
+    'session-end': 'Session saved',
+    compact: 'Session saved at compaction',
+    distill: 'Distilled',
+    'sync-failed': 'Sync failed',
+  })[kind] ?? `${kind.charAt(0).toUpperCase()}${kind.slice(1).replace(/[-_]+/g, ' ')}`;
+
+/** This project's ingest in words, as Health says it. */
+export function ingestWords(f: AgentKnowledgeIngest): string {
+  if (f.state === 'never') return `${f.project}: never ingested (${f.files}+ source files)`;
+  if (f.state === 'stale') return `${f.project}: ${f.files} files changed since (${f.changes})`;
+  return `${f.project}: up to date`;
 }
+
+/**
+ * Text as the pane may draw it: Claude Code refuses a whole drawing when one string holds a
+ * control character, so a session's tool output in colour (`\x1b[31m`), a title pasted with a
+ * bell, would blank the pane. Escape sequences (CSI, OSC and the other strings, 7-bit or C1, the
+ * two-byte ones) go whole; any other
+ * C0 or C1 control but newline and tab becomes a visible `�`; a CRLF is a newline.
+ */
+export function drawable(text: string): string {
+  return text.replace(ESCAPES, '').replace(/\r\n/g, '\n').replace(CONTROLS, '\ufffd');
+}
+/** An escape sequence: CSI, OSC, DCS, SOS, PM, APC (`ESC [` or its one-byte C1 form, …) to their end, any other (`ESC ( B`). */
+const ESCAPES =
+  // eslint-disable-next-line no-control-regex
+  /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|(?:\x1b[P\]X^_]|[\x90\x98\x9d-\x9f])[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -/]*[0-~]/g;
+/** A C0 or C1 control but newline and tab. */
+// eslint-disable-next-line no-control-regex
+const CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
 
 /** A relationship in words: related_to → related to. */
 export const relWords = (rel: string) => rel.replace(/_/g, ' ');
@@ -245,6 +322,50 @@ export const hitKey = (rev: number, hit: AgentKnowledgeHit, i: number) =>
 /** A link's key names the page it is on: the next page may link the same entry elsewhere. */
 export const linkKey = (from: string, l: AgentKnowledgeLink) =>
   `link:${from}:${l.direction}:${l.path}`;
+
+/** What a press on a button only moves to, by its key; null for one that changes something. */
+export type Move =
+  | { tab: AgentKnowledgeTab }
+  | { entry: string }
+  | { session: string }
+  | { pageSession: true }
+  | { category: string }
+  | { more: true }
+  | { analyzeMore: true }
+  | { fold: string }
+  | { back: true }
+  | { refresh: true };
+
+/**
+ * The move a button's key stands for (the keys above): a tab, an entry (a row, a hit, a link,
+ * a mention, an Analyze row), a session, a category, more, a fold, back, Refresh. Delete, Sync,
+ * Ingest, Analyze, Find and the confirmation change something: null.
+ */
+export function moveOf(key: string): Move | null {
+  const tab = /^tab:(browse|search|sessions|health)$/.exec(key)?.[1];
+  if (tab) return { tab: tab as AgentKnowledgeTab };
+  const entry = [
+    /^open:[^:]+:(.+)$/,
+    /^hit:\d+:e:(.+)$/,
+    /^link:[^:]+:(?:in|out):(.+)$/,
+    /^mention:[^:]+:(.+)$/,
+    /^(?:hub|sparse):(.+)$/,
+  ]
+    .map((re) => re.exec(key)?.[1])
+    .find((x) => x !== undefined);
+  if (entry) return { entry };
+  const session = /^sess:(.+)$/.exec(key)?.[1] ?? /^hit:\d+:s:(.+):\d+$/.exec(key)?.[1];
+  if (session) return { session };
+  if (key === 'open-session') return { pageSession: true };
+  if (key.startsWith('cat:')) return { category: key.slice(4) };
+  if (key.startsWith('more:')) return { more: true };
+  if (key.startsWith('sparse-more:')) return { analyzeMore: true };
+  const fold = /^(.+):(?:open|shut)$/.exec(key)?.[1];
+  if (fold) return { fold };
+  if (key === 'back') return { back: true };
+  if (key === 'retry' || key.startsWith('refresh:')) return { refresh: true };
+  return null;
+}
 
 /** The text fields' keys: Find on Browse, the Search field. */
 export const isField = (key: string | null) => key !== null && /^(filter|find):/.test(key);
@@ -293,6 +414,36 @@ function Fact({ el, label, children }: { el: El; label: string; children: unknow
       </Box>
     </Box>
   );
+}
+
+/** A list item whose wrapped lines hang under its first word, not under its dot. */
+function Bullet({ el, tone, children }: { el: El; tone?: string; children: unknown }) {
+  const { Box, Text } = el;
+  return (
+    <Box>
+      <Box flexShrink={0}>
+        <Text {...color(tone)}>· </Text>
+      </Box>
+      <Box flexShrink={1}>
+        <Text wrap="wrap" {...color(tone)}>
+          {children as never}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+/** The parts that fit `width` columns with their ` · `, whole; what does not fit is left out. */
+export function fitParts<P extends Part>(parts: P[], width: number): P[] {
+  const out: P[] = [];
+  let used = 0;
+  for (const p of parts) {
+    const w = cols(typeof p === 'string' ? p : p.text) + (out.length ? 3 : 0);
+    if (used + w > width) break;
+    out.push(p);
+    used += w;
+  }
+  return out;
 }
 
 /** One part of a summary line: dim text, or text with its own look. */
@@ -356,12 +507,23 @@ export type PaneProps = Omit<ViewProps, 'auto'> & {
   category: string;
   filter: string;
   list: AgentKnowledgeEntry[] | null;
+  /** Browse's drawn order kept while the pane holds the keyboard (`pinOrder`). */
+  pinned: AgentKnowledgePin | null;
+  /** This session's id: its row in Sessions is marked. */
+  current: string;
+  /** How many sessions there are in all (more than are loaded, often). */
+  sessionsTotal: number;
+  /** What the Find field is drawn with (never the typing fed back: it would drop keys). */
+  findValue: string;
   shown: number;
   search: AgentKnowledgeSearch | null;
+  /** The Search field's text while the person types anew (null: the last search's words). */
+  draft: string | null;
   sessions: AgentKnowledgeSessionRow[] | null;
   page: AgentKnowledgePage | null;
   sessionPage: AgentKnowledgeSessionPage | null;
   analysis: AgentKnowledgeAnalysis | null;
+  ingest: AgentKnowledgeIngest | null;
   expanded: string[];
   confirm: string | null;
   rev: number;
@@ -395,9 +557,18 @@ const TYPING = ['Tab leaves the field · Esc to the prompt', 'Tab leaves · Esc 
 export const fitting = (hints: string[], width: number) =>
   hints.find((hint) => cols(hint) <= width) ?? hints.at(-1)!;
 
-/** An outcome's tone, by the mark `act` in register.tsx leads it with: ✓ done, ✗ failed. */
+/**
+ * An outcome's tone, by the mark it leads with: ✓ done, ✗ refused or failed, ! changed
+ * elsewhere (a warning), – nothing happened (plain).
+ */
 const noticeTone = (notice: string) =>
-  notice.startsWith('✓') ? { color: OK } : notice.startsWith('✗') ? { color: BAD } : {};
+  notice.startsWith('✓')
+    ? { color: OK }
+    : notice.startsWith('✗')
+      ? { color: BAD }
+      : notice.startsWith('!')
+        ? { color: WARN }
+        : {};
 
 /** Why there is nothing to show: nothing answers, or an agent-knowledge from before the pane does. */
 function Down({ el, o }: { el: El; o: AgentKnowledgeOverview }) {
@@ -438,16 +609,24 @@ export function Pane(p: PaneProps) {
           confirm={p.confirm}
           hasGit={o.hasGit}
           width={width}
+          known={p.list && new Map(p.list.map((x) => [x.path, x.title]))}
         />
       ) : (
-        <Text dimColor>Loading {route.entry}…</Text>
+        <p.el.Progress label={route.entry} valueText="loading…" />
       );
   else if (route.session !== null)
     body =
       p.sessionPage?.id === route.session.id ? (
-        <SessionPage {...v} s={p.sessionPage} route={route} expanded={p.expanded} width={width} />
+        <SessionPage
+          {...v}
+          s={p.sessionPage}
+          route={route}
+          expanded={p.expanded}
+          width={width}
+          backTo={p.page && p.page.path === route.trail.at(-1) ? p.page.title : null}
+        />
       ) : (
-        <Text dimColor>Loading the session…</Text>
+        <p.el.Progress label="The session" valueText="loading…" />
       );
   else if (route.tab === 'browse')
     body = (
@@ -457,24 +636,47 @@ export function Pane(p: PaneProps) {
         category={p.category}
         filter={p.filter}
         list={p.list}
+        findValue={p.findValue}
+        pinned={p.pinned}
+        ingest={p.ingest}
         shown={p.shown}
         rev={p.rev}
         width={width}
       />
     );
   else if (route.tab === 'search')
-    body = <Search {...v} search={p.search} rev={p.rev} width={width} />;
+    body = (
+      <Search
+        {...v}
+        search={p.search}
+        rev={p.rev}
+        width={width}
+        draft={p.draft}
+        isTyping={isTyping}
+      />
+    );
   else if (route.tab === 'sessions')
-    body = <Sessions {...v} sessions={p.sessions} shown={p.shown} width={width} />;
-  else body = <Health {...v} o={o} analysis={p.analysis} expanded={p.expanded} width={width} />;
+    body = (
+      <Sessions
+        {...v}
+        sessions={p.sessions}
+        total={p.sessionsTotal}
+        current={p.current}
+        expanded={p.expanded}
+        shown={p.shown}
+        width={width}
+      />
+    );
+  else body = <Health {...v} o={o} analysis={p.analysis} ingest={p.ingest} width={width} />;
 
   return (
     <Box flexDirection="column" gap={1} width={width}>
       <Box flexDirection="column">
         {/* A narrow dock wraps the bar between two controls, never inside one. */}
         <Box flexWrap="wrap" columnGap={2}>
-          {/* Down, there is nothing to switch between: only Refresh is drawn. */}
-          {(o.isUp ? TABS : []).map(([tab, label, hotkey]) => (
+          {/* Down too: the digits stay the pane's (never typed into the prompt), and pick the
+              tab shown once the server answers. */}
+          {TABS.map(([tab, label, hotkey]) => (
             <Button
               key={`tab:${tab}`}
               {...af(p.landing, `tab:${tab}`)}
@@ -505,11 +707,11 @@ export function Pane(p: PaneProps) {
         {/* One status line under the tabs: the action in flight, else its outcome, else the
             keys. Only an outcome long enough to wrap (a refusal's reason) takes more. */}
         {p.busy ? (
-          <Text color={WARN} wrap="truncate">
-            {p.busy}…
-          </Text>
+          <p.el.Progress label={p.busy} valueText="working…" />
         ) : p.notice ? (
-          <Text {...noticeTone(p.notice)}>{p.notice}</Text>
+          <Text {...noticeTone(p.notice)} wrap="wrap">
+            {p.notice}
+          </Text>
         ) : (
           <Text dimColor wrap="truncate">
             {fitting(isTyping ? TYPING : p.isFocused ? KEYS : UNFOCUSED, width)}
@@ -543,7 +745,10 @@ function Row({
   onPress: () => void;
 }) {
   const { Box, Text, Button } = el;
-  const shown = facts.filter((f): f is Part => Boolean(f));
+  const shown = fitParts(
+    facts.filter((f): f is Part => Boolean(f)),
+    Math.max(10, width - 2),
+  );
   return (
     <Box flexDirection="column">
       <Button key={k} {...af(auto, k)} plain onPress={onPress}>
@@ -579,13 +784,14 @@ function Row({
 /** What an entry row says beneath its title. */
 function entryFacts(e: AgentKnowledgeEntry, withCategory: boolean, filter: string): Part[] {
   const q = needle(filter);
-  const tags = q ? e.tags.filter((t) => t.toLowerCase().includes(q)) : e.tags.slice(0, 3);
+  const isHit = (t: string) => q !== '' && t.toLowerCase().includes(q);
+  const tags = [...e.tags.filter(isHit), ...e.tags.filter((t) => !isHit(t))].slice(0, 3);
   return [
-    ...(withCategory ? [e.category] : []),
+    ...(withCategory ? [catLabel(e.category)] : []),
     ...(e.isEvergreen ? [{ text: 'evergreen', color: ACCENT }] : []),
     ...(e.maturity !== 'candidate' ? [e.maturity] : []),
-    ...tags.map((t) => (q ? { text: `tag ${t}`, color: ACCENT } : `#${t}`)),
     ...(e.updated ? [ago(e.updated)] : []),
+    ...tags.map((t) => (isHit(t) ? { text: `#${t}`, color: ACCENT } : `#${t}`)),
   ];
 }
 
@@ -597,6 +803,9 @@ function Browse({
   category,
   filter,
   list,
+  findValue,
+  pinned,
+  ingest,
   shown,
   rev,
   width,
@@ -605,30 +814,59 @@ function Browse({
   category: string;
   filter: string;
   list: AgentKnowledgeEntry[] | null;
+  findValue: string;
+  pinned: AgentKnowledgePin | null;
+  ingest: AgentKnowledgeIngest | null;
   shown: number;
   rev: number;
   width: number;
 }) {
   const { Box, Text, Button, Input } = el;
-  if (o.entries === 0)
+  const snapshots = o.snapshots;
+  const empty = (
+    <Box flexDirection="column">
+      <Text>The knowledge base is empty.</Text>
+      <Text dimColor>
+        Agents save what they learn here, by category: projects, people, decisions, workflows and
+        notes. Past sessions are under Sessions.
+      </Text>
+      {/* The next step there is: this project's code, ingested. */}
+      {ingest && ingest.state !== 'current' && (
+        <Box marginTop={1}>
+          <Button
+            key="ingest"
+            {...af(auto, 'ingest')}
+            label={`Ingest ${ingest.project} ›`}
+            onPress={on.ingest}
+          />
+        </Box>
+      )}
+    </Box>
+  );
+  if (o.entries === 0 && snapshots === 0) return empty;
+  // Only session snapshots so far: the empty state, then where the snapshots are.
+  if (o.entries === 0 && category !== SNAPSHOTS)
     return (
-      <Box flexDirection="column">
-        <Text>The knowledge base is empty.</Text>
-        <Text dimColor>
-          Agents save what they learn here, by category: projects, people, decisions, workflows and
-          notes. Past sessions are under Sessions.
-        </Text>
+      <Box flexDirection="column" gap={1}>
+        {empty}
+        <Button
+          key={`cat:${SNAPSHOTS}`}
+          {...af(auto, `cat:${SNAPSHOTS}`)}
+          label={`${plural(snapshots, 'session snapshot')} ›`}
+          plain
+          onPress={() => on.pickCategory(SNAPSHOTS)}
+        />
       </Box>
     );
-  const cats = ['all', ...categoryOrder(o.categories)];
-  const found = browseRows(list ?? [], category, filter);
+  const cats = ['all', ...categoryOrder(o.categories), ...(snapshots ? [SNAPSHOTS] : [])];
+  const found = browseRows(list ?? [], category, filter, pinned);
   const rows = found.slice(0, shown);
   const isFiltered = filter !== '';
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexWrap="wrap" columnGap={2}>
         {cats.map((c) => {
-          const n = c === 'all' ? o.entries : (o.categories[c] ?? 0);
+          const n = c === 'all' ? o.entries : c === SNAPSHOTS ? snapshots : (o.categories[c] ?? 0);
           return (
             <Button
               key={`cat:${c}`}
@@ -639,10 +877,10 @@ function Browse({
             >
               {c === category ? (
                 <Text bold underline>
-                  {c} {n}
+                  {catLabel(c)} {n}
                 </Text>
               ) : (
-                `${c} ${n}`
+                `${catLabel(c)} ${n}`
               )}
             </Button>
           );
@@ -654,8 +892,9 @@ function Browse({
             key={`filter:${rev}`}
             label="Find"
             placeholder={fitting(['title, path or tag', 'title or tag'], width - 13)}
-            value={filter}
+            value={findValue}
             submitLabel="find"
+            onInput={on.narrow}
             onSubmit={on.filter}
           />
           {isFiltered && (
@@ -672,7 +911,7 @@ function Browse({
         </Box>
       )}
       {list === null ? (
-        <Text dimColor>Loading…</Text>
+        <el.Progress label="Entries" valueText="loading…" />
       ) : found.length === 0 ? (
         <Text dimColor>{isFiltered ? 'No entry matches.' : 'Nothing in this category.'}</Text>
       ) : (
@@ -681,10 +920,10 @@ function Browse({
             el={el}
             title={
               isFiltered
-                ? `Matches${category === 'all' ? '' : ` in ${category}`}`
+                ? `Matches${category === 'all' ? '' : ` in ${catLabel(category)}`}`
                 : category === 'all'
                   ? 'Every entry'
-                  : cap(category)
+                  : cap(catLabel(category))
             }
             aside="newest first"
           />
@@ -704,8 +943,9 @@ function Browse({
             <Button
               key={`more:${rows.length}`}
               {...af(auto, `more:${rows.length}`)}
-              label={`▸ ${Math.min(PAGE, found.length - rows.length)} more (${found.length - rows.length} left)`}
+              label={`▸ ${Math.min(PAGE, found.length - rows.length)} more`}
               plain
+              dimColor
               onPress={on.more}
             />
           )}
@@ -722,12 +962,37 @@ function Search({
   search,
   rev,
   width,
-}: ViewProps & { search: AgentKnowledgeSearch | null; rev: number; width: number }) {
+  draft,
+  isTyping,
+}: ViewProps & {
+  search: AgentKnowledgeSearch | null;
+  rev: number;
+  width: number;
+  /** The field's text while the person types anew; null: the last search's words. */
+  draft: string | null;
+  /** The ring is in a text field: keys type. */
+  isTyping: boolean;
+}) {
   const { Box, Text, Input } = el;
-  const hits = (title: string, list: AgentKnowledgeHit[], offset: number) =>
-    list.length === 0 ? null : (
+  const hits = (
+    title: string,
+    list: AgentKnowledgeHit[],
+    offset: number,
+    cap: number,
+    none: string,
+  ) =>
+    list.length === 0 ? (
       <Box flexDirection="column">
-        <Heading el={el} title={title} aside={String(list.length)} />
+        <Heading el={el} title={title} aside="0" />
+        <Text dimColor>{none}</Text>
+      </Box>
+    ) : (
+      <Box flexDirection="column">
+        <Heading
+          el={el}
+          title={title}
+          aside={list.length >= cap ? `${cap}, the best` : String(list.length)}
+        />
         {list.map((hit, i) =>
           hit.kind === 'entry' ? (
             <Row
@@ -736,7 +1001,7 @@ function Search({
               auto={auto}
               k={hitKey(rev, hit, i + offset)}
               title={hit.title}
-              facts={[hit.category]}
+              facts={[catLabel(hit.category)]}
               extra={hit.excerpt}
               width={width}
               onPress={() => on.open(hit.path)}
@@ -747,7 +1012,7 @@ function Search({
               el={el}
               auto={auto}
               k={hitKey(rev, hit, i + offset)}
-              title={hit.project}
+              title={hit.name}
               facts={[hit.when ? time(hit.when) : '', ROLE[hit.role]]}
               extra={hit.excerpt}
               width={width}
@@ -765,12 +1030,16 @@ function Search({
           {...af(auto, `find:${rev}`)}
           label="Search"
           placeholder={fitting(['words, in entries and sessions', 'words to find'], width - 15)}
-          value={search?.query ?? ''}
+          value={draft ?? search?.query ?? ''}
           submitLabel="search"
+          onInput={on.typing}
           onSubmit={on.search}
         />
       ) : (
         <Text dimColor>Searching needs a surface with text fields.</Text>
+      )}
+      {!isTyping && (
+        <Text {...color(ACCENT)}>Press 2 again, or Enter on Search, to type a search.</Text>
       )}
       {!search ? (
         <Text dimColor>
@@ -780,8 +1049,14 @@ function Search({
         <Text dimColor>Nothing found for "{search.query}".</Text>
       ) : (
         <Box flexDirection="column" gap={1}>
-          {hits('Entries', search.entries, 0)}
-          {hits('Sessions', search.sessions, search.entries.length)}
+          {hits('Entries', search.entries, 0, ENTRY_HITS, 'No entry has these words.')}
+          {hits(
+            'In past sessions',
+            search.sessions,
+            search.entries.length,
+            SESSION_HITS,
+            'No past session has these words.',
+          )}
         </Box>
       )}
     </Box>
@@ -798,23 +1073,46 @@ export function duration(start: string, end: string): string {
   return `${Math.floor(min / 60)}h${min % 60 ? ` ${min % 60}m` : ''}`;
 }
 
+/**
+ * The sessions Sessions lists: the ones something was asked in; those with no prompt (a
+ * /clear and nothing after, a session only of commands) once the person unfolds them.
+ */
+export function sessionRows(sessions: AgentKnowledgeSessionRow[], expanded: string[]) {
+  return expanded.includes('promptless') ? sessions : sessions.filter((s) => s.prompts > 0);
+}
+
 function Sessions({
   el,
   on,
   auto,
   sessions,
+  total,
+  current,
+  expanded,
   shown,
   width,
-}: ViewProps & { sessions: AgentKnowledgeSessionRow[] | null; shown: number; width: number }) {
+}: ViewProps & {
+  sessions: AgentKnowledgeSessionRow[] | null;
+  /** The sessions there are in all: past the ones loaded, `more` loads the next. */
+  total: number;
+  current: string;
+  expanded: string[];
+  shown: number;
+  width: number;
+}) {
   const { Box, Text, Button } = el;
-  if (sessions === null) return <Text dimColor>Loading…</Text>;
+  if (sessions === null) return <el.Progress label="Sessions" valueText="loading…" />;
   if (sessions.length === 0)
     return (
       <Text dimColor>
         No sessions found. Sessions of Claude Code, Cursor and OpenCode on this machine show here.
       </Text>
     );
-  const rows = sessions.slice(0, shown);
+  const listed = sessionRows(sessions, expanded);
+  // Older sessions than the ones loaded: `more` goes on to them.
+  const unloaded = Math.max(0, total - sessions.length);
+  const promptless = sessions.length - sessions.filter((s) => s.prompts > 0).length;
+  const rows = listed.slice(0, shown);
   return (
     <Box flexDirection="column">
       <Heading el={el} title="Recent sessions" aside="newest first" />
@@ -824,20 +1122,34 @@ function Sessions({
           el={el}
           auto={auto}
           k={`sess:${s.id}`}
-          title={s.project}
+          title={s.id === current ? `${s.name} (this session)` : s.name}
           facts={[s.start !== 'unknown' && time(s.start), duration(s.start, s.end), s.branch]}
-          extra={s.preview}
+          extra={s.preview || 'nothing asked'}
           width={width}
           onPress={() => on.openSession(s.id, s.project)}
         />
       ))}
-      {sessions.length > rows.length && (
+      {listed.length - rows.length + unloaded > 0 && (
         <Button
           key={`more:${rows.length}`}
           {...af(auto, `more:${rows.length}`)}
-          label={`▸ ${Math.min(PAGE, sessions.length - rows.length)} more`}
+          label={`▸ ${Math.min(PAGE, listed.length - rows.length + unloaded)} more`}
           plain
+          dimColor
           onPress={on.more}
+        />
+      )}
+      {promptless > 0 && (
+        <Button
+          key={foldKey('promptless', expanded.includes('promptless'))}
+          label={
+            expanded.includes('promptless')
+              ? '▾ Show less'
+              : `▸ ${promptless} more where nothing was asked`
+          }
+          plain
+          dimColor
+          onPress={() => on.toggle('promptless')}
         />
       )}
     </Box>
@@ -869,8 +1181,9 @@ function Folded({
       {items.length > LIST_SHOWN && (
         <Button
           key={foldKey(part, isOpen)}
-          label={isOpen ? '▾ Fewer' : `▸ ${items.length - LIST_SHOWN} more`}
+          label={isOpen ? '▾ Show less' : `▸ ${items.length - LIST_SHOWN} more`}
           plain
+          dimColor
           onPress={() => on.toggle(part)}
         />
       )}
@@ -878,10 +1191,195 @@ function Folded({
   );
 }
 
-/** Who said a session hit: the person asked, the agent answered. */
-const ROLE: Record<string, string> = { user: 'asked', assistant: 'answered' };
+/** Who said a session hit: the person asked, the agent answered, or a tool was called or answered. */
+const ROLE: Record<string, string> = {
+  user: 'asked',
+  assistant: 'answered',
+  tool_use: 'tool call',
+  tool_result: 'tool output',
+};
 
 const ARROWS = { out: '→', in: '←' } as const;
+
+/**
+ * One link on a page, read as a sentence: `→ depends on REST only` (this entry depends on it),
+ * `← agent-tasks · depends on this` (it depends on this one). One to an entry that is not there
+ * is drawn, not pressed.
+ */
+function LinkRow({
+  el,
+  auto,
+  k,
+  direction,
+  rel,
+  title,
+  origin,
+  isGone,
+  onPress,
+}: {
+  el: El;
+  auto: string | null;
+  k: string;
+  direction: 'out' | 'in';
+  rel: string;
+  title: string;
+  origin: string | null;
+  isGone: boolean;
+  onPress: () => void;
+}) {
+  const { Box, Text, Button } = el;
+  const after = [direction === 'in' ? `${rel} this` : '', origin ?? '', isGone ? 'gone' : '']
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <Box columnGap={1}>
+      <Box flexShrink={0}>
+        <Text dimColor>{direction === 'out' ? `${ARROWS.out} ${rel}` : ARROWS.in}</Text>
+      </Box>
+      <Box flexShrink={1}>
+        {isGone ? (
+          <Text dimColor wrap="wrap">
+            {`${title}${after ? ` · ${after}` : ''}`}
+          </Text>
+        ) : (
+          <Button key={k} {...af(auto, k)} plain onPress={onPress}>
+            <Text wrap="wrap">
+              {title}
+              {after ? <Text dimColor> · {after}</Text> : null}
+            </Text>
+          </Button>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+/** A Markdown link to another entry: `[words](projects/x.md)`, by its path from the knowledge root. */
+const ENTRY_LINK = /\[([^\]]+)\]\((?![a-z][\w+.-]*:)([^)\s]+\.md)\)/gi;
+
+/** The entries a body links to, by their paths from the knowledge root, once each. */
+export function entryLinks(body: string, from: string): string[] {
+  const dir = from.split('/').slice(0, -1);
+  const out = new Set<string>();
+  for (const m of body.matchAll(ENTRY_LINK)) {
+    const parts = m[2]!.startsWith('/') ? [] : [...dir];
+    for (const seg of m[2]!.replace(/^\//, '').split('/')) {
+      if (seg === '..') parts.pop();
+      else if (seg !== '.') parts.push(seg);
+    }
+    // A path naming its category from the root reads from the root.
+    const rel = parts.join('/');
+    out.add(dir.length && m[2]!.includes('/') && !m[2]!.startsWith('.') ? m[2]! : rel);
+  }
+  return [...out];
+}
+
+/** A body with its entry links as their words: they are listed, and pressed, under Links. */
+export const plainEntryLinks = (body: string) => body.replace(ENTRY_LINK, '$1');
+
+/**
+ * A body whose Markdown tables fit `width`: a table wider than the pane reads one row a line,
+ * its cells joined with ` · ` (the header bold), as box drawing past the edge cannot be read.
+ */
+export function fitTables(body: string, width: number): string {
+  const lines = body.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; ) {
+    if (!/^\s*\|/.test(lines[i]!)) {
+      out.push(lines[i++]!);
+      continue;
+    }
+    const table: string[] = [];
+    while (i < lines.length && /^\s*\|/.test(lines[i]!)) table.push(lines[i++]!.trim());
+    const cells = (row: string) =>
+      row
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((c) => c.trim());
+    const rows = table.filter((r) => !/^\|?[\s:|-]+\|?$/.test(r)).map(cells);
+    const widths = rows[0]?.map((_, c) => Math.max(...rows.map((r) => cols(r[c] ?? '')))) ?? [];
+    const drawn = widths.reduce((sum, w) => sum + w + 3, 1);
+    if (drawn <= width) {
+      out.push(...table);
+      continue;
+    }
+    // Too wide: each row as its pairs, every value with the header it stands under.
+    const [head = [], ...body] = rows;
+    for (const r of body)
+      out.push(r.map((v, c) => `**${head[c] || c + 1}:** ${v}`).join(' · '), '');
+  }
+  return out.join('\n');
+}
+
+/** A body cut into its prose (drawn as Markdown) and its fenced code (drawn as code lines). */
+export type BodyPart = { code: false; text: string } | { code: true; lines: string[] };
+
+/** The parts of body lines; a fence the fold cut open runs to the end. */
+export function bodyParts(lines: string[]): BodyPart[] {
+  const parts: BodyPart[] = [];
+  let prose: string[] = [];
+  let code: string[] | null = null;
+  const flush = () => {
+    if (prose.join('\n').trim()) parts.push({ code: false, text: prose.join('\n').trim() });
+    prose = [];
+  };
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      if (code === null) {
+        flush();
+        code = [];
+      } else {
+        parts.push({ code: true, lines: code });
+        code = null;
+      }
+      continue;
+    }
+    (code ?? prose).push(line);
+  }
+  if (code !== null) parts.push({ code: true, lines: code });
+  flush();
+  return parts;
+}
+
+/**
+ * Code apart from the prose: a dim bar before each line, so a long line wrapped (its rest
+ * indented under it, with no bar) never reads as a second command.
+ */
+function CodeLines({ el, lines }: { el: El; lines: string[] }) {
+  const { Box, Text } = el;
+  return (
+    <Box flexDirection="column">
+      {lines.map((line, i) => (
+        <Box key={`line:${i}`} columnGap={1}>
+          <Box flexShrink={0}>
+            <Text dimColor>│</Text>
+          </Box>
+          <Box flexShrink={1}>
+            <Text color={ACCENT} wrap="wrap">
+              {line || ' '}
+            </Text>
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+/** What deleting an entry does, said before it is done: what goes, what it leaves, for good. */
+export function deleteQuestion(page: AgentKnowledgePage, hasGit: boolean): string {
+  const incoming = page.links.filter((l) => l.direction === 'in' && !l.isMissing).length;
+  return [
+    `Delete ${page.path}?`,
+    hasGit
+      ? 'The file goes, and the deletion is pushed to the remote (its git history keeps it).'
+      : 'The file goes from this machine for good: there is no undo.',
+    incoming > 0
+      ? `${count(incoming, 'entry', 'entries')} that link${incoming === 1 ? 's' : ''} here lose${incoming === 1 ? 's' : ''} that link.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
 
 function EntryPage({
   el,
@@ -893,7 +1391,10 @@ function EntryPage({
   confirm,
   hasGit,
   width,
+  known,
 }: ViewProps & {
+  /** The entries there are, by path to title; null until the list was loaded. */
+  known: Map<string, string> | null;
   page: AgentKnowledgePage;
   hasGit: boolean;
   route: AgentKnowledgeRoute;
@@ -902,11 +1403,19 @@ function EntryPage({
   width: number;
 }) {
   const { Box, Text, Button, Markdown } = el;
+  // Links the text makes to other entries: listed with the links, the text drawn without them.
+  const mentions = entryLinks(page.body, page.path).filter(
+    (p) => !page.links.some((l) => l.path === p),
+  );
+  const isGone = (p: string) => known !== null && !known.has(p);
+  const gone = page.links.filter((l) => l.isMissing).length + mentions.filter(isGone).length;
+  const rowsDrawn = page.links.length + mentions.length;
   const prev = route.trail.at(-1);
   // The entry it came from links to this one: its title comes with the link, from the server.
-  const backTitle = page.links.find((l) => l.path === prev)?.title;
+  const backTitle =
+    page.links.find((l) => l.path === prev)?.title ?? (prev ? known?.get(prev) : undefined);
   const backLabel = prev ? clip(backTitle ?? baseName(prev), 40) : cap(route.tab);
-  const lines = page.body.split('\n');
+  const lines = fitTables(plainEntryLinks(page.body), width).split('\n');
   const isFolding = lines.length >= BODY_LINES + BODY_FOLD;
   const isBodyOpen = expanded.includes('body') || !isFolding;
   return (
@@ -930,7 +1439,7 @@ function EntryPage({
           el={el}
           width={width}
           parts={[
-            page.category,
+            catLabel(page.category),
             page.isEvergreen && { text: 'evergreen', color: ACCENT },
             page.maturity !== 'candidate' && page.maturity,
             page.reads > 0 && plural(page.reads, 'read'),
@@ -938,6 +1447,46 @@ function EntryPage({
           ]}
         />
       </Box>
+
+      {page.session && (
+        <Box flexDirection="column">
+          <Fact el={el} label="Session">
+            <Text wrap="wrap">{page.session.id}</Text>
+          </Fact>
+          {page.session.cwd && (
+            <Fact el={el} label="Folder">
+              <Text wrap="wrap">{page.session.cwd}</Text>
+            </Fact>
+          )}
+          {page.session.branch && (
+            <Fact el={el} label="Branch">
+              <Text>{page.session.branch}</Text>
+            </Fact>
+          )}
+          {page.session.started && (
+            <Fact el={el} label="Started">
+              <Text>{time(page.session.started)}</Text>
+            </Fact>
+          )}
+          {page.session.ended && (
+            <Fact el={el} label="Last seen">
+              <Text>{time(page.session.ended)}</Text>
+            </Fact>
+          )}
+          {page.session.isHere ? (
+            <Button
+              key="open-session"
+              label="Open the session ›"
+              plain
+              onPress={() => on.openSession(page.session!.id, '')}
+            />
+          ) : (
+            <Text dimColor wrap="wrap">
+              The session's transcript is not on this machine: the snapshot is what is kept of it.
+            </Text>
+          )}
+        </Box>
+      )}
 
       {(page.tags.length > 0 || page.author || page.lastRead) && (
         <Box flexDirection="column">
@@ -959,24 +1508,36 @@ function EntryPage({
         </Box>
       )}
 
-      {page.links.length > 0 && (
+      {page.links.length + mentions.length > 0 && (
         <Box flexDirection="column">
-          <Heading el={el} title="Links" aside={String(page.links.length)} />
+          <Heading el={el} title="Links" aside={`${rowsDrawn}${gone ? `, ${gone} gone` : ''}`} />
           {page.links.map((l) => (
-            <Button
+            <LinkRow
               key={linkKey(page.path, l)}
-              {...af(auto, linkKey(page.path, l))}
-              plain
+              el={el}
+              auto={auto}
+              k={linkKey(page.path, l)}
+              direction={l.direction}
+              rel={relWords(l.rel)}
+              title={l.title}
+              origin={l.origin !== 'manual' ? l.origin : null}
+              isGone={l.isMissing}
               onPress={() => on.open(l.path)}
-            >
-              <Text wrap="wrap">
-                <Text dimColor>
-                  {ARROWS[l.direction]} {relWords(l.rel)}{' '}
-                </Text>
-                {l.title}
-                {l.origin !== 'manual' ? <Text dimColor> · {l.origin}</Text> : null}
-              </Text>
-            </Button>
+            />
+          ))}
+          {mentions.map((m) => (
+            <LinkRow
+              key={`mention:${page.path}:${m}`}
+              el={el}
+              auto={auto}
+              k={`mention:${page.path}:${m}`}
+              direction="out"
+              rel="mentions"
+              title={known?.get(m) ?? baseName(m)}
+              origin={null}
+              isGone={isGone(m)}
+              onPress={() => on.open(m)}
+            />
           ))}
         </Box>
       )}
@@ -985,15 +1546,22 @@ function EntryPage({
         {page.body.trim() === '' ? (
           <Text dimColor>No text.</Text>
         ) : (
-          <Markdown
-            text={isBodyOpen ? page.body.trim() : lines.slice(0, BODY_LINES).join('\n').trim()}
-          />
+          <Box flexDirection="column" gap={1}>
+            {bodyParts(isBodyOpen ? lines : lines.slice(0, BODY_LINES)).map((part, i) =>
+              part.code ? (
+                <CodeLines key={`code:${i}`} el={el} lines={part.lines} />
+              ) : (
+                <Markdown key={`text:${i}`} text={part.text} />
+              ),
+            )}
+          </Box>
         )}
         {isFolding && (
           <Button
             key={foldKey('body', expanded.includes('body'))}
             label={expanded.includes('body') ? '▾ Show less' : `▸ Show all ${lines.length} lines`}
             plain
+            dimColor
             onPress={() => on.toggle('body')}
           />
         )}
@@ -1001,19 +1569,21 @@ function EntryPage({
 
       {confirm === `delete:${page.path}` ? (
         <Box flexDirection="column" borderStyle="round" borderColor={BAD} paddingX={1}>
-          <Text color={BAD}>
-            Delete {page.path}?{' '}
-            {hasGit
-              ? 'The file goes and the deletion is pushed to the remote.'
-              : 'The file goes from this machine.'}
+          <Text color={BAD} wrap="wrap">
+            {deleteQuestion(page, hasGit)}
           </Text>
-          <Box columnGap={1}>
-            <Button key="confirm-yes" label="Delete" onPress={() => on.remove(page.path)} />
+          {/* The safe answer first, with the ring on it. */}
+          <Box columnGap={1} flexWrap="wrap">
             <Button
               key="confirm-no"
-              label="Never mind"
+              label="Keep it"
               {...af(auto, 'confirm-no')}
               onPress={on.dismiss}
+            />
+            <Button
+              key="confirm-yes"
+              label={`Delete ${clip(page.path, 40)}`}
+              onPress={() => on.remove(page.path)}
             />
           </Box>
         </Box>
@@ -1034,17 +1604,26 @@ function SessionPage({
   route,
   expanded,
   width,
+  backTo,
 }: ViewProps & {
   s: AgentKnowledgeSessionPage;
   route: AgentKnowledgeRoute;
   expanded: string[];
   width: number;
+  /** The title of the snapshot it was opened from; null: back to the tab. */
+  backTo: string | null;
 }) {
   const { Box, Text, Button } = el;
-  const section = (part: string, title: string, items: string[], tone?: string) =>
+  const section = (
+    part: string,
+    title: string,
+    items: string[],
+    tone?: string,
+    n = items.length,
+  ) =>
     items.length === 0 ? null : (
       <Box key={`sec:${part}`} flexDirection="column">
-        <Heading el={el} title={title} aside={String(items.length)} />
+        <Heading el={el} title={title} aside={String(n)} />
         <Folded
           el={el}
           on={on}
@@ -1052,9 +1631,9 @@ function SessionPage({
           expanded={expanded}
           items={items}
           render={(it, i) => (
-            <Text key={`${part}:${i}`} wrap="wrap" {...color(tone)}>
-              · {oneLine(it)}
-            </Text>
+            <Bullet key={`${part}:${i}`} el={el} tone={tone}>
+              {oneLine(it)}
+            </Bullet>
           )}
         />
       </Box>
@@ -1064,14 +1643,14 @@ function SessionPage({
       <Box flexDirection="column">
         <Button
           key="back"
-          label={`‹ ${cap(route.tab)}`}
+          label={`‹ ${backTo ? clip(backTo, 40) : cap(route.tab)}`}
           plain
           dimColor
           {...af(auto, 'back')}
           onPress={on.back}
         />
         <Text bold wrap="wrap">
-          {s.project}
+          {s.name}
         </Text>
         <Parts
           el={el}
@@ -1079,8 +1658,7 @@ function SessionPage({
           parts={[
             s.start !== 'unknown' && time(s.start),
             duration(s.start, s.end),
-            plural(s.messages, 'message'),
-            s.branch,
+            plural(s.prompts, 'prompt'),
           ]}
         />
         {s.cwd && (
@@ -1089,11 +1667,30 @@ function SessionPage({
           </Text>
         )}
       </Box>
+      <Box flexDirection="column">
+        {s.branch && (
+          <Fact el={el} label="Branch">
+            <Text wrap="wrap">{s.branch}</Text>
+          </Fact>
+        )}
+        <Fact el={el} label="Session">
+          <Text wrap="wrap">{s.id}</Text>
+        </Fact>
+        <Fact el={el} label="Resume">
+          <Text wrap="wrap">claude --resume {s.id}</Text>
+        </Fact>
+      </Box>
       {section('topics', 'What was asked', s.topics)}
       {section('files', 'Files changed', s.files)}
       {section('commits', 'Commits', s.commits)}
       {section('errors', 'Errors', s.errors, BAD)}
-      {section('tools', 'Tools used', s.tools.length ? [s.tools.join(', ')] : [])}
+      {section(
+        'tools',
+        'Tools used',
+        s.tools.length ? [s.tools.join(', ')] : [],
+        undefined,
+        s.tools.length,
+      )}
       {s.topics.length + s.files.length + s.commits.length + s.errors.length === 0 && (
         <Text dimColor>Nothing to summarise in this session.</Text>
       )}
@@ -1107,12 +1704,12 @@ function Health({
   auto,
   o,
   analysis,
-  expanded,
+  ingest,
   width,
 }: ViewProps & {
   o: AgentKnowledgeOverview;
   analysis: AgentKnowledgeAnalysis | null;
-  expanded: string[];
+  ingest: AgentKnowledgeIngest | null;
   width: number;
 }) {
   const { Box, Text, Button } = el;
@@ -1126,10 +1723,15 @@ function Health({
             width={width - LABEL - 1}
             parts={[
               { text: String(o.entries), bold: true },
-              ...cats.map((c) => `${c} ${o.categories[c]}`),
+              ...cats.map((c) => `${catLabel(c)} ${o.categories[c]}`),
             ]}
           />
         </Fact>
+        {o.snapshots > 0 && (
+          <Fact el={el} label="Snapshots">
+            <Text>{o.snapshots}</Text>
+          </Fact>
+        )}
         <Fact el={el} label="Sessions">
           <Text>{o.sessions}</Text>
         </Fact>
@@ -1141,7 +1743,8 @@ function Health({
           </Text>
         </Fact>
         <Fact el={el} label="Folder">
-          <Text>{clipPath(o.memoryDir, width - LABEL - 1)}</Text>
+          {/* Whole, wrapped: a path cut to fit hides where the folder is. */}
+          <Text wrap="wrap">{o.memoryDir}</Text>
         </Fact>
         <Fact el={el} label="Git">
           <Text wrap="wrap" {...color(o.hasGit ? undefined : WARN)}>
@@ -1153,8 +1756,18 @@ function Health({
         <Fact el={el} label="Server">
           <Text>{o.version}</Text>
         </Fact>
+        {ingest && (
+          <Fact el={el} label="Ingest">
+            <Text wrap="wrap" {...color(ingest.state !== 'current' && WARN)}>
+              {ingestWords(ingest)}
+            </Text>
+          </Fact>
+        )}
       </Box>
       <Box flexWrap="wrap" columnGap={1}>
+        {ingest && ingest.state !== 'current' && (
+          <Button key="ingest" label={`Ingest ${ingest.project} ›`} onPress={on.ingest} />
+        )}
         {o.hasGit && <Button key="sync" label="Sync now" {...af(auto, 'sync')} onPress={on.sync} />}
         <Button
           key={analysis ? 'analyze:again' : 'analyze:first'}
@@ -1163,10 +1776,13 @@ function Health({
           onPress={on.analyze}
         />
       </Box>
-      {analysis && (
-        <Analysis el={el} on={on} auto={auto} a={analysis} expanded={expanded} width={width} />
-      )}
       {o.events.length > 0 && <Events el={el} events={o.events} />}
+      {analysis &&
+        (o.entries === 0 ? (
+          <Text dimColor>No entries to analyze.</Text>
+        ) : (
+          <Analysis el={el} on={on} auto={auto} a={analysis} width={width} />
+        ))}
     </Box>
   );
 }
@@ -1176,10 +1792,12 @@ function Analysis({
   on,
   auto,
   a,
-  expanded,
   width,
-}: ViewProps & { a: AgentKnowledgeAnalysis; expanded: string[]; width: number }) {
-  const { Box, Text } = el;
+}: ViewProps & {
+  a: AgentKnowledgeAnalysis;
+  width: number;
+}) {
+  const { Box, Text, Button } = el;
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
@@ -1199,31 +1817,36 @@ function Analysis({
         ))}
       </Box>
       <Box flexDirection="column">
-        <Heading el={el} title="One link or none" aside={String(a.sparse.length)} />
-        {a.sparse.length === 0 ? (
-          <Text dimColor>Every entry has two links or more.</Text>
-        ) : (
-          <Folded
+        <Heading
+          el={el}
+          title="One link or none"
+          aside={
+            a.sparseTotal > a.sparse.length
+              ? `${a.sparse.length} of ${a.sparseTotal}`
+              : String(a.sparse.length)
+          }
+        />
+        {a.sparse.length === 0 && <Text dimColor>Every entry has two links or more.</Text>}
+        {/* Fewest links first, then by title, a page at a time. */}
+        {a.sparse.map((x) => (
+          <Row
+            key={`sparse:${x.path}`}
             el={el}
-            on={on}
-            part="sparse"
-            expanded={expanded}
-            items={a.sparse.map((x) => x.path)}
-            render={(p) => {
-              const x = a.sparse.find((y) => y.path === p);
-              return (
-                <Row
-                  key={`sparse:${p}`}
-                  el={el}
-                  auto={auto}
-                  k={`sparse:${p}`}
-                  title={x?.title ?? baseName(p)}
-                  facts={[x?.edges ? plural(x.edges, 'link') : 'no links']}
-                  width={width}
-                  onPress={() => on.open(p)}
-                />
-              );
-            }}
+            auto={auto}
+            k={`sparse:${x.path}`}
+            title={x.title}
+            facts={[x.edges ? plural(x.edges, 'link') : 'no links']}
+            width={width}
+            onPress={() => on.open(x.path)}
+          />
+        ))}
+        {a.sparseTotal > a.sparse.length && (
+          <Button
+            key={`sparse-more:${a.sparse.length}`}
+            label={`▸ ${Math.min(ANALYSIS_PAGE, a.sparseTotal - a.sparse.length)} more`}
+            plain
+            dimColor
+            onPress={on.analyzeMore}
           />
         )}
       </Box>
@@ -1237,10 +1860,16 @@ function Events({ el, events }: { el: El; events: AgentKnowledgeEvent[] }) {
     <Box flexDirection="column">
       <Heading el={el} title="Recent activity" aside="newest first" />
       {[...events].reverse().map((e) => (
-        <Text key={`ev:${e.id}`} wrap="wrap">
-          <Text dimColor>{time(new Date(e.ts).toISOString())} </Text>
-          {e.kind}: {e.message}
-        </Text>
+        <Box key={`ev:${e.id}`} columnGap={1}>
+          <Box flexShrink={0}>
+            <Text dimColor>{time(new Date(e.ts).toISOString())}</Text>
+          </Box>
+          <Box flexShrink={1}>
+            <Text wrap="wrap">
+              {eventWords(e.kind)}: {e.message}
+            </Text>
+          </Box>
+        </Box>
       ))}
     </Box>
   );

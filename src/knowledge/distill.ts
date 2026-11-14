@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { withoutControls } from '../text.js';
 import {
   getProjectDirs,
   getSessionFiles,
@@ -36,35 +37,46 @@ function setLastDistillTime(iso: string): void {
 // ── Secrets / sensitive data scrubbing ──────────────────────────────────────
 
 const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
-  // API keys and tokens (common prefixes)
-  { pattern: /\b(sk-[a-zA-Z0-9]{20,})\b/g, replacement: '[REDACTED_API_KEY]' },
-  { pattern: /\b(ghp_[a-zA-Z0-9]{36,})\b/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
-  { pattern: /\b(gho_[a-zA-Z0-9]{36,})\b/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
-  { pattern: /\b(glpat-[a-zA-Z0-9_-]{20,})\b/g, replacement: '[REDACTED_GITLAB_TOKEN]' },
-  { pattern: /\b(xox[bsapr]-[a-zA-Z0-9-]{10,})\b/g, replacement: '[REDACTED_SLACK_TOKEN]' },
-  { pattern: /\b(AIza[a-zA-Z0-9_-]{35})\b/g, replacement: '[REDACTED_GOOGLE_KEY]' },
+  // API keys and tokens (common prefixes). A key's body runs on through `-` and `_`
+  // (sk-ant-api03-…, sk-proj-…, github_pat_…): a rule that stopped there would match nothing.
+  { pattern: /\b(sk-[a-zA-Z0-9_-]{20,})/g, replacement: '[REDACTED_API_KEY]' },
+  { pattern: /\b([sr]k_(?:live|test)_[a-zA-Z0-9]{16,})/g, replacement: '[REDACTED_API_KEY]' },
+  { pattern: /\b(gh[pousr]_[a-zA-Z0-9]{36,})\b/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
+  { pattern: /\b(github_pat_[a-zA-Z0-9_]{22,})/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
+  { pattern: /\b(glpat-[a-zA-Z0-9_-]{20,})/g, replacement: '[REDACTED_GITLAB_TOKEN]' },
+  { pattern: /\b(npm_[a-zA-Z0-9]{36,})\b/g, replacement: '[REDACTED_NPM_TOKEN]' },
+  { pattern: /\b(xox[bsapr]-[a-zA-Z0-9-]{10,})/g, replacement: '[REDACTED_SLACK_TOKEN]' },
+  { pattern: /\b(AIza[a-zA-Z0-9_-]{35})/g, replacement: '[REDACTED_GOOGLE_KEY]' },
   { pattern: /\b(AKIA[A-Z0-9]{16})\b/g, replacement: '[REDACTED_AWS_KEY]' },
   {
-    pattern: /\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,})\b/g,
+    pattern: /\b(eyJ[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,})/g,
     replacement: '[REDACTED_JWT]',
   },
 
-  // Generic key=value patterns
+  // An assignment to a name that says it holds a secret (aws_secret_access_key = …,
+  // "client_secret": "…", DB_PASSWORD=…, authToken: …): the value goes, the name stays. A value
+  // of digits only (a count) or under 8 characters is left, as is a name like "author".
   {
     pattern:
-      /(?:api[_-]?key|apikey|secret[_-]?key|access[_-]?token|auth[_-]?token|bearer|password|passwd|pwd)\s*[:=]\s*["']?([^\s"']{8,})["']?/gi,
-    replacement: '[REDACTED_CREDENTIAL]',
+      /(["']?\b[\w.-]*?(?:secret|token|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential|bearer|auth(?:orization|entication)?(?![a-z]))[\w.-]*["']?\s*[:=]\s*["']?)(?!\[REDACTED)(?![0-9]+(?=[\s"']|$))[^\s"']{8,}/gi,
+    replacement: '$1[REDACTED_CREDENTIAL]',
+  },
+
+  // Basic credentials in a header
+  {
+    pattern: /\b(Authorization:\s*Basic)\s+[A-Za-z0-9+/]{8,}={0,2}/gi,
+    replacement: '$1 [REDACTED]',
   },
 
   // Bearer tokens in headers
   { pattern: /Bearer\s+[a-zA-Z0-9._\-+/=]{20,}/gi, replacement: 'Bearer [REDACTED]' },
 
   // Connection strings with passwords
-  { pattern: /(:\/\/[^:]+:)[^@\s]{4,}(@)/g, replacement: '$1[REDACTED]$2' },
+  { pattern: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@]+(@)/gi, replacement: '$1[REDACTED]$2' },
 
-  // Private key blocks
+  // Private key blocks, and one cut before its end (a prompt cut short)
   {
-    pattern: /-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----/g,
+    pattern: /-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END[A-Z ]*PRIVATE KEY-----|$)/g,
     replacement: '[REDACTED_PRIVATE_KEY]',
   },
 
@@ -110,7 +122,7 @@ const NOISE_PATTERNS: RegExp[] = [
  * Scrub secrets and system noise from text before it reaches git.
  */
 export function scrubContent(text: string): string {
-  let result = text;
+  let result = withoutControls(text);
 
   for (const pattern of NOISE_PATTERNS) {
     result = result.replace(pattern, '');
@@ -122,7 +134,8 @@ export function scrubContent(text: string): string {
     result = result.replace(pattern, replacement);
   }
 
-  result = result.replace(/[A-Z]:[/\\]Users[/\\][^/\\\s]+[/\\]/gi, '~/');
+  // The path keeps its own separator: a Windows path stays one, not half of each.
+  result = result.replace(/[A-Z]:([/\\])Users[/\\][^/\\\s]+[/\\]/gi, '~$1');
   result = result.replace(/\/home\/[^/\s]+\//g, '~/');
 
   result = result.replace(/\n{3,}/g, '\n\n');

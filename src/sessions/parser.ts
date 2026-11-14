@@ -1,8 +1,10 @@
 import fs from 'fs';
+import { branchName, humanText } from './human.js';
 import os from 'os';
 import path from 'path';
 import { getConfig } from '../types.js';
 import { getAvailableAdapters } from './adapters/index.js';
+import { runAll, runSliced } from '../slice.js';
 
 // ── Text extraction helper ──────────────────────────────────────────────────
 
@@ -60,12 +62,66 @@ export interface SessionEntry {
   gitBranch?: string;
   message?: { role?: string; content: unknown };
   content?: string;
+  /** Claude Code: written by the host in the person's turn (a skill's text, an image note). */
+  isMeta?: boolean;
+  /** Claude Code: the summary a compaction wrote in the person's turn, not their prompt. */
+  isCompactSummary?: boolean;
 }
 
 export interface SessionMessage {
   role: 'user' | 'assistant' | 'tool_use' | 'tool_result';
+  /** What was said; for a tool call, a line as a person reads it: `Edit src/a.ts`, `Bash git push`. */
   content: string;
   timestamp: string | null;
+  /** A tool call's name and input as the host recorded them. */
+  tool?: ToolCall;
+}
+
+export interface ToolCall {
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** The arguments that say what a call did, most telling first. */
+const TOOL_ARGS = [
+  'file_path',
+  'notebook_path',
+  'path',
+  'target_file',
+  'filePath',
+  'command',
+  'pattern',
+  'query',
+  'url',
+  'description',
+  'prompt',
+];
+
+/** A tool call as one short line: its name and the argument that says what it did. */
+export function toolCallText(call: ToolCall): string {
+  const key = TOOL_ARGS.find((k) => typeof call.input[k] === 'string' && call.input[k] !== '');
+  const arg = key ? String(call.input[key]).replace(/\s+/g, ' ').trim() : '';
+  const line = arg ? `${call.name} ${arg}` : call.name;
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
+
+/** A tool call from a host's record of one: a block, or a JSON text of `{ name, input }`. */
+function toolCallOf(raw: unknown): ToolCall | null {
+  let v = raw;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (!v || typeof v !== 'object') return null;
+  const { name, input } = v as { name?: unknown; input?: unknown };
+  if (typeof name !== 'string' || !name) return null;
+  return {
+    name,
+    input: input && typeof input === 'object' ? (input as Record<string, unknown>) : {},
+  };
 }
 
 export interface SessionMeta {
@@ -74,7 +130,9 @@ export interface SessionMeta {
   cwd: string;
   branch: string;
   messageCount: number;
+  /** The prompts (`promptsOf`): 0 for a session nobody asked anything in. */
   userMessageCount: number;
+  /** The first prompt, to 200 characters; '' with none. */
   preview: string;
 }
 
@@ -85,33 +143,93 @@ export interface SessionMeta {
  * Malformed lines are silently skipped.
  */
 export function parseSessionFile(filePath: string): SessionEntry[] {
+  const entries: SessionEntry[] = [];
+  runAll(parseSteps(filePath, entries));
+  return entries;
+}
+
+/**
+ * parseSessionFile without holding the process: a transcript of tens of megabytes is parsed in
+ * slices, so the REST holder keeps answering while a snapshot reads it.
+ */
+export async function readSessionFile(filePath: string): Promise<SessionEntry[]> {
+  const entries: SessionEntry[] = [];
+  await runSliced(parseSteps(filePath, entries));
+  return entries;
+}
+
+/** Reads a session (a file, or an adapter's) into `out`, one step per line parsed. */
+function* parseSteps(filePath: string, out: SessionEntry[]) {
   // Dispatch virtual descriptors to the appropriate adapter
   for (const adapter of getAvailableAdapters()) {
     if (filePath.startsWith(`${adapter.prefix}://`)) {
-      return adapter.parseSession(filePath);
+      out.push(...adapter.parseSession(filePath));
+      return;
     }
   }
-
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
     console.error('[knowledge] read session file:', err instanceof Error ? err.message : err);
-    return [];
+    return;
   }
+  yield* lineSteps(raw, out);
+}
 
-  const lines = raw.split('\n').filter((l) => l.trim());
-  const entries: SessionEntry[] = [];
-
-  for (const line of lines) {
+/** The entries of JSONL text into `out`, one step per line; a line that is not JSON is skipped. */
+function* lineSteps(raw: string, out: SessionEntry[]) {
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
     try {
-      entries.push(JSON.parse(line));
+      out.push(JSON.parse(line));
     } catch (err) {
       console.error('[knowledge] parse session line:', err instanceof Error ? err.message : err);
     }
+    yield;
   }
+}
 
+/** The entries of JSONL text, one per line; a line that is not JSON is skipped. */
+function parseLines(raw: string): SessionEntry[] {
+  const entries: SessionEntry[] = [];
+  runAll(lineSteps(raw, entries));
   return entries;
+}
+
+/**
+ * The entries a JSONL session file holds from byte `from` on, up to its last complete line,
+ * and the byte that line ends at: a live session's file only grows, so what it gained since
+ * `from` is read without reading it all again. A last line that is not yet whole JSON (still
+ * being written) waits for the next read. Throws when the file cannot be read.
+ */
+export function readSessionTail(
+  filePath: string,
+  from = 0,
+): { entries: SessionEntry[]; end: number } {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (size <= from) return { entries: [], end: from };
+    const buf = Buffer.alloc(size - from);
+    const read = fs.readSync(fd, buf, 0, buf.length, from);
+    const last = read > 0 ? buf.lastIndexOf(0x0a, read - 1) : -1;
+    const entries = last < 0 ? [] : parseLines(buf.toString('utf-8', 0, last + 1));
+    // After the last newline: a finished last line (a file that ends without one), or a line
+    // still being written, which does not parse yet and waits for the next read.
+    const rest = buf.toString('utf-8', last + 1, read).trim();
+    if (rest) {
+      try {
+        entries.push(JSON.parse(rest) as SessionEntry);
+        return { entries, end: from + read };
+      } catch {
+        /* still being written */
+      }
+    }
+    return { entries, end: from + last + 1 };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**
@@ -150,11 +268,14 @@ export function extractMessages(entries: SessionEntry[]): SessionMessage[] {
       }
       // Claude Code nests tool calls in the assistant's content, not as entries of their own.
       for (const u of toolParts(entry.message.content, 'tool_use')) {
-        messages.push({
-          role: 'tool_use',
-          content: JSON.stringify({ name: u.name, input: u.input }).substring(0, 500),
-          timestamp: ts,
-        });
+        const call = toolCallOf(u);
+        if (call)
+          messages.push({
+            role: 'tool_use',
+            content: toolCallText(call),
+            timestamp: ts,
+            tool: call,
+          });
       }
     } else if (entryType === 'tool_use' || entryType === 'tool_result') {
       const content =
@@ -164,7 +285,11 @@ export function extractMessages(entries: SessionEntry[]): SessionMessage[] {
             ? entry.message.content
             : null;
 
-      if (content) {
+      // A tool call recorded as JSON reads as a line; anything else as it came.
+      const call = entryType === 'tool_use' && content ? toolCallOf(content) : null;
+      if (call) {
+        messages.push({ role: 'tool_use', content: toolCallText(call), timestamp: ts, tool: call });
+      } else if (content) {
         messages.push({
           role: entryType as 'tool_use' | 'tool_result',
           content: content.substring(0, 500),
@@ -175,6 +300,21 @@ export function extractMessages(entries: SessionEntry[]): SessionMessage[] {
   }
 
   return messages;
+}
+
+/**
+ * What the person asked, in order (`humanText`): their own messages, not what the host wrote in
+ * their turn (`isMeta`: a skill's instructions, an image note, a message from another agent;
+ * `isCompactSummary`: the summary a compaction left).
+ */
+export function promptsOf(
+  entries: SessionEntry[],
+): Array<{ timestamp: string | null; text: string }> {
+  return entries.flatMap((e) => {
+    if ((e.type ?? e.role) !== 'user' || e.isMeta || e.isCompactSummary) return [];
+    const text = humanText(extractText(e.message?.content) ?? '');
+    return text ? [{ timestamp: e.timestamp ?? null, text }] : [];
+  });
 }
 
 /**
@@ -189,7 +329,7 @@ export function getSessionMeta(entries: SessionEntry[]): SessionMeta {
       branch: 'unknown',
       messageCount: 0,
       userMessageCount: 0,
-      preview: 'N/A',
+      preview: '',
     };
   }
 
@@ -203,17 +343,16 @@ export function getSessionMeta(entries: SessionEntry[]): SessionMeta {
   const lastWithTimestamp = [...entries].reverse().find((e) => e.timestamp);
   const first = firstWithTimestamp ?? entries[0];
   const last = lastWithTimestamp ?? entries[entries.length - 1];
-  const userMessages = entries.filter((e) => (e.type ?? e.role) === 'user');
-  const firstUserMsg = userMessages[0]?.message?.content;
+  const said = promptsOf(entries);
 
   return {
     startTime: first?.timestamp ?? 'unknown',
     endTime: last?.timestamp ?? 'unknown',
     cwd: first?.cwd ?? 'unknown',
-    branch: first?.gitBranch ?? 'unknown',
+    branch: branchName(first?.gitBranch ?? ''),
     messageCount: entries.length,
-    userMessageCount: userMessages.length,
-    preview: (extractText(firstUserMsg) ?? 'N/A').substring(0, 200),
+    userMessageCount: said.length,
+    preview: (said[0]?.text ?? '').substring(0, 200),
   };
 }
 

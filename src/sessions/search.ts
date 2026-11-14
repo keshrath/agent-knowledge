@@ -1,5 +1,7 @@
+import { statSync, type Stats } from 'node:fs';
 import { recencyDecay } from '../search/tfidf.js';
 import { BM25Index } from '../search/bm25.js';
+import { runSliced } from '../slice.js';
 import { buildExcerpt } from '../search/excerpt.js';
 import { buildBoostContext, applyBoosts, hasAnyBoostSignal } from '../search/boosts.js';
 import {
@@ -8,8 +10,11 @@ import {
   parseSessionFile,
   extractMessages,
   getSessionMeta,
+  readSessionTail,
+  type SessionEntry,
 } from './parser.js';
 import type { SearchResult } from '../search/types.js';
+import { projectName } from './human.js';
 import { getEmbeddingProvider } from '../embeddings/index.js';
 import { VectorStore } from '../vectorstore/index.js';
 import { getConfig } from '../types.js';
@@ -70,7 +75,7 @@ export async function searchSessions(
     return regexSearch(query, projects, role, caseSensitive, maxResults);
   }
 
-  const tfidfResults = rankedSearch(query, projects, role, maxResults);
+  const tfidfResults = await rankedSearch(query, projects, role, maxResults);
 
   if (semantic) {
     try {
@@ -209,6 +214,8 @@ async function hybridSearch(
 
 interface DocRef {
   project: string;
+  /** The project as a person names it (`projectName`). */
+  name: string;
   sessionId: string;
   role: string;
   timestamp: string | null;
@@ -216,107 +223,192 @@ interface DocRef {
   sessionDate: string;
 }
 
-interface IndexCache {
+/**
+ * One TF-IDF index over every session message (a search for a role or projects filters its
+ * ranking), kept in step with
+ * the session files. Each search compares the files' sizes with what was read: a session file
+ * that grew (a live session appends to it) is read from where the last read ended, one that
+ * shrank or was replaced is read again, a new one is read whole and a gone one dropped. A
+ * session an adapter serves from elsewhere (a database: no file) is read again once a minute.
+ */
+interface SessionIndex {
   index: BM25Index;
   docMap: Map<string, DocRef>;
-  timestamp: number;
-  projectHash: string;
-  role: string;
+  /** Per session: the byte its file was read up to (-1: no file), when read, and its docs. */
+  files: Map<
+    string,
+    { end: number; mtimeMs: number; startTime: string; name: string; docIds: string[] }
+  >;
+  checkedAt: number;
+  nextId: number;
 }
 
-let _indexCache: IndexCache | null = null;
-const INDEX_TTL = 60_000; // 60 seconds
+let sessionIndex: SessionIndex | null = null;
+/** Searches within this long of the last comparison trust it. */
+const RECHECK_MS = 2_000;
+/** How often a session without a file is read again. */
+const VIRTUAL_REFRESH_MS = 60_000;
 
-function getOrBuildIndex(
-  projects: Array<{ name: string; path: string }>,
-  role: string,
-): { index: BM25Index; docMap: Map<string, DocRef> } {
-  const projectHash = projects.map((p) => p.name).join(',');
-  const now = Date.now();
+function dropFile(idx: SessionIndex, file: string): void {
+  for (const id of idx.files.get(file)?.docIds ?? []) {
+    idx.index.removeDocument(id);
+    idx.docMap.delete(id);
+  }
+  idx.files.delete(file);
+}
 
-  if (
-    _indexCache &&
-    now - _indexCache.timestamp < INDEX_TTL &&
-    _indexCache.projectHash === projectHash &&
-    _indexCache.role === role
-  ) {
-    return _indexCache;
+/** Indexes `entries` of a session; `startTime` is the session's own, from its first read. */
+function addEntries(
+  idx: SessionIndex,
+  entries: SessionEntry[],
+  ref: { project: string; name: string; sessionId: string; startTime: string },
+): string[] {
+  const docIds: string[] = [];
+  for (const msg of extractMessages(entries)) {
+    const docId = `doc_${idx.nextId++}`;
+    idx.index.addDocument(docId, msg.content);
+    idx.docMap.set(docId, {
+      project: ref.project,
+      name: ref.name,
+      sessionId: ref.sessionId,
+      role: msg.role,
+      timestamp: msg.timestamp,
+      content: msg.content,
+      sessionDate: ref.startTime,
+    });
+    docIds.push(docId);
+  }
+  return docIds;
+}
+
+/** Brings one session's documents up to date with its file (or its adapter). */
+function refreshSession(
+  idx: SessionIndex,
+  file: string,
+  ref: { project: string; sessionId: string },
+  now: number,
+): void {
+  const had = idx.files.get(file);
+  let st: Stats | null = null;
+  try {
+    st = statSync(file);
+  } catch {
+    /* no file: an adapter's session */
   }
 
-  const index = new BM25Index();
-  const docMap = new Map<string, DocRef>();
-  let docCounter = 0;
+  if (!st) {
+    if (had && now - had.mtimeMs < VIRTUAL_REFRESH_MS) return;
+    dropFile(idx, file);
+    const entries = parseSessionFile(file);
+    const meta = getSessionMeta(entries);
+    const name = projectName(meta.cwd, ref.project);
+    const docIds = addEntries(idx, entries, { ...ref, startTime: meta.startTime, name });
+    idx.files.set(file, { end: -1, mtimeMs: now, startTime: meta.startTime, name, docIds });
+    return;
+  }
 
-  for (const proj of projects) {
-    const sessions = getSessionFiles(proj.path);
-    for (const sess of sessions) {
+  if (had && had.end === st.size && had.mtimeMs === st.mtimeMs) return;
+  const grew = had !== undefined && had.end >= 0 && st.size >= had.end;
+  if (!grew) dropFile(idx, file);
+  const { entries, end } = readSessionTail(file, grew ? had.end : 0);
+  // The session's start and folder come with its first lines: a read that found none yet
+  // (a file still empty) leaves them to the next one.
+  const meta = grew && had.startTime ? null : getSessionMeta(entries);
+  const startTime = meta ? (entries.length ? meta.startTime : '') : had!.startTime;
+  const name = meta ? projectName(entries.length ? meta.cwd : '', ref.project) : had!.name;
+  const docIds = addEntries(idx, entries, { ...ref, startTime, name });
+  idx.files.set(file, {
+    end,
+    mtimeMs: st.mtimeMs,
+    startTime,
+    name,
+    docIds: grew ? [...had.docIds, ...docIds] : docIds,
+  });
+}
+
+/** Brings the index up to date with the session files, one step per session. */
+function* refreshSessionIndex(idx: SessionIndex) {
+  const now = Date.now();
+  const seen = new Set<string>();
+  for (const proj of getProjectDirs()) {
+    for (const sess of getSessionFiles(proj.path)) {
+      seen.add(sess.file);
       try {
-        const entries = parseSessionFile(sess.file);
-        if (entries.length === 0) continue;
-        const meta = getSessionMeta(entries);
-        const messages = extractMessages(entries);
-
-        for (const msg of messages) {
-          if (role !== 'all' && msg.role !== role) continue;
-
-          const docId = `doc_${docCounter++}`;
-          index.addDocument(docId, msg.content);
-          docMap.set(docId, {
-            project: proj.name,
-            sessionId: sess.id,
-            role: msg.role,
-            timestamp: msg.timestamp,
-            content: msg.content,
-            sessionDate: meta.startTime,
-          });
-        }
+        refreshSession(idx, sess.file, { project: proj.name, sessionId: sess.id }, now);
       } catch {
-        // skip broken files
+        // unreadable now: its documents go, and it is read again next time
+        dropFile(idx, sess.file);
       }
+      yield;
     }
   }
-
-  _indexCache = { index, docMap, timestamp: now, projectHash, role };
-  return _indexCache;
+  for (const file of [...idx.files.keys()]) if (!seen.has(file)) dropFile(idx, file);
+  idx.checkedAt = now;
 }
 
-function rankedSearch(
+/** One refresh at a time per index: a search that comes during one waits for it. */
+const refreshing = new Map<SessionIndex, Promise<void>>();
+
+/**
+ * The index, brought up to date in slices: a session store of gigabytes is read without holding
+ * the process, so the REST holder keeps answering.
+ */
+async function getOrBuildIndex(): Promise<{ index: BM25Index; docMap: Map<string, DocRef> }> {
+  sessionIndex ??= {
+    index: new BM25Index(),
+    docMap: new Map(),
+    files: new Map(),
+    checkedAt: 0,
+    nextId: 0,
+  };
+  const index = sessionIndex;
+  let running = refreshing.get(index);
+  if (!running && Date.now() - index.checkedAt >= RECHECK_MS) {
+    running = runSliced(refreshSessionIndex(index)).finally(() => refreshing.delete(index));
+    refreshing.set(index, running);
+  }
+  if (running) await running;
+  return index;
+}
+
+/** Builds the index every search of all sessions uses, as the REST holder starts. */
+export async function warmSessionIndex(): Promise<void> {
+  await getOrBuildIndex();
+}
+
+async function rankedSearch(
   query: string,
   projects: Array<{ name: string; path: string }>,
   role: string,
   maxResults: number,
-): SearchResult[] {
-  const { index, docMap } = getOrBuildIndex(projects, role);
-  const ranked = index.search(query, maxResults * 2);
-
-  const results = ranked
-    .map(({ id, score }) => {
-      const doc = docMap.get(id);
-      if (!doc) return null;
-      const excerpt = buildExcerpt(doc.content, query);
-      const ts = doc.timestamp ?? doc.sessionDate;
-      const decay = recencyDecay(ts);
-      const adjustedScore = score * decay;
-
-      return {
-        source: 'session' as const,
-        id: doc.sessionId,
-        project: doc.project,
-        role: doc.role,
-        timestamp: ts,
-        excerpt,
-        score: adjustedScore,
-        metadata: {
-          sessionDate: doc.sessionDate,
-          relevanceScore: score,
-          recencyMultiplier: Math.round(decay * 100) / 100,
-        },
-      };
-    })
-    .filter((r): r is NonNullable<typeof r> => r !== null);
-
-  results.sort((a, b) => b.score - a.score);
-  return results.slice(0, maxResults);
+): Promise<SearchResult[]> {
+  const { index, docMap } = await getOrBuildIndex();
+  const inProjects = new Set(projects.map((p) => p.name));
+  const hits = index.search(query).flatMap(({ id, score }) => {
+    const doc = docMap.get(id);
+    if (!doc || !inProjects.has(doc.project)) return [];
+    if (role !== 'all' && doc.role !== role) return [];
+    const ts = doc.timestamp ?? doc.sessionDate;
+    const decay = recencyDecay(ts);
+    return [{ doc, ts, score, decay, adjusted: score * decay }];
+  });
+  hits.sort((a, b) => b.adjusted - a.adjusted);
+  // The excerpts of the hits answered alone: a common word matches thousands of messages.
+  return hits.slice(0, maxResults).map(({ doc, ts, score, decay, adjusted }) => ({
+    source: 'session' as const,
+    id: doc.sessionId,
+    project: doc.project,
+    name: doc.name,
+    role: doc.role,
+    timestamp: ts,
+    excerpt: buildExcerpt(doc.content, query),
+    score: adjusted,
+    metadata: {
+      sessionDate: doc.sessionDate,
+      relevanceScore: score,
+      recencyMultiplier: Math.round(decay * 100) / 100,
+    },
+  }));
 }
 
 // ── Regex-based search (legacy mode) ────────────────────────────────────────
@@ -359,6 +451,7 @@ function regexSearch(
             source: 'session',
             id: sess.id,
             project: proj.name,
+            name: projectName(meta.cwd, proj.name),
             role: msg.role,
             timestamp: msg.timestamp ?? meta.startTime,
             excerpt,

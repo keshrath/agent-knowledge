@@ -12,8 +12,8 @@ Detailed instructions for installing, configuring, and integrating agent-knowled
   - [Cursor](#cursor)
   - [Windsurf](#windsurf)
   - [REST API](#rest-api)
-- [Hooks](#hooks)
-  - [Claude Code Hooks](#claude-code-hooks)
+- [Session lifecycle](#session-lifecycle)
+  - [Claude Code](#claude-code-1)
   - [OpenCode Plugins](#opencode-plugins)
   - [Cursor and Windsurf](#cursor-and-windsurf)
 - [Knowledge Base Setup](#knowledge-base-setup)
@@ -61,17 +61,26 @@ agent-knowledge works with any MCP client (stdio) or HTTP client (REST API). Pic
 
 ### Claude Code
 
-#### Quick setup (recommended)
-
-From the agent-knowledge clone:
+#### The plugin (recommended)
 
 ```bash
-node scripts/setup.js
+claude plugin marketplace add keshrath/agent-knowledge
+claude plugin install agent-knowledge@agent-knowledge
 ```
 
-This detects Claude Code, registers the MCP server in `~/.claude.json`, wires all 6 lifecycle hooks into `~/.claude/settings.json`, and grants `mcp__agent-knowledge__*` permission in one shot. Restart Claude Code afterwards to pick up the new config.
+It runs the MCP server (`npx agent-knowledge@^3`), adds the `knowledge-ingest` skill and a mod (Claude Code 2.1.289+): the `/knowledge` pane and the [session lifecycle](HOOKS.md). Nothing goes into `settings.json`.
 
-#### Register the MCP server (manual)
+Coming from 2.x, run once from the clone:
+
+```bash
+node scripts/setup.js --host=claude
+```
+
+It removes the six command hooks 2.x installed into `~/.claude/settings.json` (their scripts are gone in 3.0) and grants `mcp__agent-knowledge__*`. Remove a hand-written `agent-knowledge` entry from `~/.claude.json` as well, so the tools do not appear twice.
+
+#### Register the MCP server alone (manual)
+
+Without the plugin there is no pane and no lifecycle, only the tools:
 
 ```bash
 claude mcp add agent-knowledge -s user \
@@ -178,83 +187,13 @@ curl -X POST http://localhost:3423/api/knowledge \
 
 ---
 
-## Hooks
+## Session lifecycle
 
-agent-knowledge ships **6 hook scripts** that wire into Claude Code's lifecycle events. `scripts/setup.js` installs them automatically; the block below shows the manual equivalent. Support varies by client.
+What happens around each session, beyond the tools the model calls. Support varies by client.
 
-| Hook                       | Event            | Purpose                                                                          |
-| -------------------------- | ---------------- | -------------------------------------------------------------------------------- |
-| `session-start.js`         | SessionStart     | Names the `/knowledge` pane + auto-loads the L0 identity into context            |
-| `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff           |
-| `first-prompt-inject.mjs`  | UserPromptSubmit | v1.8 — query-targeted knowledge hits injected on the session's first real prompt |
-| `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context           |
-| `precompact-distill.mjs`   | PreCompact       | Lightweight text snapshot of recent user prompts                                 |
-| `sessionend-distill.mjs`   | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                         |
+### Claude Code
 
-See [`docs/HOOKS.md`](HOOKS.md) for the full hook reference including environment variables and test coverage.
-
-### Claude Code Hooks
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/session-start.js\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/session-start-ingest.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/first-prompt-inject.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/precompact-flush.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/precompact-distill.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/path/to/agent-knowledge/scripts/hooks/sessionend-distill.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+The plugin's mod: each conversation starts knowing what the knowledge base holds, who the person is (or asks them once) and the project's ingest state; the first real prompt carries the matching entries; the session is snapshotted into `sessions/<project>/` when it is compacted and when it ends. No command hooks. See [HOOKS.md](HOOKS.md) for every part and its switches.
 
 ### OpenCode Plugins
 
@@ -285,24 +224,24 @@ node scripts/setup.js --host=all                           # both Claude Code an
 
 #### What the plugin does
 
-Mirrors the Claude Code hooks where opencode has an equivalent event:
+The Claude Code lifecycle where opencode has an equivalent event:
 
-| Claude Code hook          | OpenCode analog                   | Behavior                                                              |
-| ------------------------- | --------------------------------- | --------------------------------------------------------------------- |
-| `session-start.js`        | `event: session.created`          | Knowledge-base toast + clears stale first-prompt marker on resume.    |
-| `first-prompt-inject.mjs` | `chat.message`                    | Searches the KB and prepends a rendered hits block to the user parts. |
-| `precompact-flush.mjs`    | `experimental.session.compacting` | Pushes a "save unsaved knowledge before compaction" nudge.            |
-| `sessionend-distill.mjs`  | `event: session.deleted`          | Writes `~/agent-knowledge/projects/session-opencode-<slug>.md`.       |
+| Claude Code (mod)                | OpenCode analog                   | Behavior                                                              |
+| -------------------------------- | --------------------------------- | --------------------------------------------------------------------- |
+| the context block                | `event: session.created`          | Knowledge-base toast + clears stale first-prompt marker on resume.    |
+| the first real prompt            | `chat.message`                    | Searches the KB and prepends a rendered hits block to the user parts. |
+| compaction: keep what is unsaved | `experimental.session.compacting` | Pushes a "save unsaved knowledge before compaction" nudge.            |
+| the session snapshot at the end  | `event: session.deleted`          | Writes `~/agent-knowledge/projects/session-opencode-<slug>.md`.       |
 
-Not ported (opencode has no equivalent surface):
+Not here (opencode has no equivalent surface):
 
-- `session-start-ingest.mjs` (paired with the `/knowledge-ingest` skill flow).
-- `precompact-distill.mjs` (opencode compaction does not expose the transcript to plugins).
-- L0 identity auto-load (no `additionalContext` equivalent — put identity in `AGENTS.md` or call `knowledge(action="wakeup")` manually).
+- The ingest freshness of the project (pair `/knowledge-ingest` by hand).
+- The snapshot at compaction (opencode compaction does not expose the transcript to plugins).
+- L0 identity auto-load (no context-block equivalent — put identity in `AGENTS.md` or call `knowledge(action="wakeup")` manually).
 
 #### Environment variables
 
-Same as the Claude hooks, all optional:
+As for the Claude Code mod, all optional:
 
 | Variable                               | Default             | Description                                             |
 | -------------------------------------- | ------------------- | ------------------------------------------------------- |
@@ -311,9 +250,9 @@ Same as the Claude hooks, all optional:
 | `AGENT_KNOWLEDGE_PORT`                 | `3423`              | REST port (plugin queries `/api/knowledge/search`).     |
 | `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`                 | Set `0` / `false` / `off` to disable inject entirely.   |
 | `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`               | Max inject tokens (chars/4), clamped `[100, 8000]`.     |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`                 | Max rendered hits, clamped `[1, 20]`.                   |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `2`                 | Max rendered hits, clamped `[1, 2]`.                    |
 
-Every hook fails open — errors during search, toast, session walk, or disk write are swallowed and the user is never blocked.
+Every part fails open — errors during search, toast, session walk, or disk write are swallowed and the user is never blocked.
 
 Combine with `AGENTS.md` instructions (see below).
 
@@ -390,15 +329,15 @@ agent-knowledge ships a **knowledge-ingest** skill for bootstrapping or updating
 
 ### Automatic installation
 
-`node scripts/setup.js` installs the skill to both `~/.claude/skills/` and `~/.agents/skills/`, covering all major platforms:
+The Claude Code plugin carries the skill. `node scripts/setup.js` installs it to `~/.agents/skills/` for the other platforms:
 
-| Platform    | Discovery path                           | Covered by setup.js |
-| ----------- | ---------------------------------------- | ------------------- |
-| Claude Code | `~/.claude/skills/`                      | Yes                 |
-| OpenCode    | `~/.claude/skills/`, `~/.agents/skills/` | Yes                 |
-| Cursor      | `~/.claude/skills/`, `~/.agents/skills/` | Yes                 |
-| Codex CLI   | `~/.agents/skills/`                      | Yes                 |
-| Gemini CLI  | `~/.agents/skills/`                      | Yes                 |
+| Platform    | Discovery path                           | Covered by              |
+| ----------- | ---------------------------------------- | ----------------------- |
+| Claude Code | the plugin                               | `claude plugin install` |
+| OpenCode    | `~/.claude/skills/`, `~/.agents/skills/` | setup.js                |
+| Cursor      | `~/.claude/skills/`, `~/.agents/skills/` | setup.js                |
+| Codex CLI   | `~/.agents/skills/`                      | setup.js                |
+| Gemini CLI  | `~/.agents/skills/`                      | setup.js                |
 
 ### Manual installation
 
@@ -463,24 +402,24 @@ Architecture notes, deployment info, etc.
 
 ## Environment Variables
 
-| Variable                                                  | Default             | Description                                                      |
-| --------------------------------------------------------- | ------------------- | ---------------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_MEMORY_DIR`                              | `~/agent-knowledge` | Path to git-synced knowledge base                                |
-| `AGENT_KNOWLEDGE_DATA_DIR`                                | (platform config)   | Override primary host data root (adapters auto-detect otherwise) |
-| `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS`                     | --                  | Additional session directories, comma-separated                  |
-| `OPENCODE_DATA_DIR`                                       | (platform default)  | Override OpenCode data dir (default `~/.local/share/opencode`)   |
-| `AGENT_KNOWLEDGE_PORT`                                    | `3423`              | Local REST API port (the `/knowledge` pane, hooks, agent-tasks)  |
-| `AGENT_KNOWLEDGE_HOST`                                    | `127.0.0.1`         | REST bind address                                                |
-| `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider (local, openai, claude, gemini)               |
-| `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.5`               | Blend weight for semantic vs TF-IDF search (0-1)                 |
-| `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | —                   | Idle timeout for embedding worker (ms)                           |
-| `AGENT_KNOWLEDGE_EMBEDDING_THREADS`                       | —                   | Number of ONNX threads for local embeddings                      |
-| `AGENT_KNOWLEDGE_EMBEDDING_MODEL`                         | —                   | Model name for embedding provider                                |
-| `AGENT_KNOWLEDGE_GIT_URL`                                 | —                   | Remote git URL for knowledge base sync                           |
-| `AGENT_KNOWLEDGE_AUTO_DISTILL`                            | —                   | Enable auto-distillation of sessions (true/false)                |
-| `AGENT_KNOWLEDGE_OPENAI_API_KEY` / `OPENAI_API_KEY`       | —                   | API key for OpenAI embeddings                                    |
-| `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` | —                   | API key for Claude/Voyage embeddings                             |
-| `AGENT_KNOWLEDGE_GEMINI_API_KEY` / `GEMINI_API_KEY`       | —                   | API key for Gemini embeddings                                    |
+| Variable                                                  | Default             | Description                                                             |
+| --------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_MEMORY_DIR`                              | `~/agent-knowledge` | Path to git-synced knowledge base                                       |
+| `AGENT_KNOWLEDGE_DATA_DIR`                                | (platform config)   | Override primary host data root (adapters auto-detect otherwise)        |
+| `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS`                     | --                  | Additional session directories, comma-separated                         |
+| `OPENCODE_DATA_DIR`                                       | (platform default)  | Override OpenCode data dir (default `~/.local/share/opencode`)          |
+| `AGENT_KNOWLEDGE_PORT`                                    | `3423`              | Local REST API port (the Claude Code and opencode plugins, agent-tasks) |
+| `AGENT_KNOWLEDGE_HOST`                                    | `127.0.0.1`         | REST bind address                                                       |
+| `AGENT_KNOWLEDGE_EMBEDDING_PROVIDER`                      | `local`             | Embedding provider (local, openai, claude, gemini)                      |
+| `AGENT_KNOWLEDGE_EMBEDDING_ALPHA`                         | `0.5`               | Blend weight for semantic vs TF-IDF search (0-1)                        |
+| `AGENT_KNOWLEDGE_EMBEDDING_IDLE_TIMEOUT`                  | —                   | Idle timeout for embedding worker (ms)                                  |
+| `AGENT_KNOWLEDGE_EMBEDDING_THREADS`                       | —                   | Number of ONNX threads for local embeddings                             |
+| `AGENT_KNOWLEDGE_EMBEDDING_MODEL`                         | —                   | Model name for embedding provider                                       |
+| `AGENT_KNOWLEDGE_GIT_URL`                                 | —                   | Remote git URL for knowledge base sync                                  |
+| `AGENT_KNOWLEDGE_AUTO_DISTILL`                            | —                   | Enable auto-distillation of sessions (true/false)                       |
+| `AGENT_KNOWLEDGE_OPENAI_API_KEY` / `OPENAI_API_KEY`       | —                   | API key for OpenAI embeddings                                           |
+| `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` | —                   | API key for Claude/Voyage embeddings                                    |
+| `AGENT_KNOWLEDGE_GEMINI_API_KEY` / `GEMINI_API_KEY`       | —                   | API key for Gemini embeddings                                           |
 
 Set in your shell profile or pass via MCP config:
 
@@ -621,7 +560,7 @@ If your session data is in a non-standard location, use `AGENT_KNOWLEDGE_EXTRA_S
 | -------------------- | ----------- | -------------------- | ------------- | ---------- | ------------ | -------------- | -------------- |
 | MCP stdio transport  | Yes         | Yes                  | Yes           | Yes        | Yes          | --             | Yes            |
 | Session reading      | Yes (JSONL) | Yes (JSONL)          | Yes (SQLite)  | Yes (JSON) | Yes (JSON)   | Yes (MD/JSONL) | --             |
-| Lifecycle hooks      | Yes (JSON)  | No                   | Yes (plugins) | No         | No           | --             | No             |
+| Session lifecycle    | Yes (mod)   | No                   | Yes (plugins) | No         | No           | --             | No             |
 | Session auto-distill | Yes         | Yes                  | Yes           | Yes        | Yes          | Yes            | --             |
 | System prompt file   | CLAUDE.md   | .cursor/rules/\*.mdc | AGENTS.md     | --         | --           | --             | .windsurfrules |
 | REST API fallback    | Yes         | Yes                  | Yes           | Yes        | Yes          | Yes            | Yes            |

@@ -24,6 +24,24 @@ function cleanup(dir: string): void {
 // ── parseFrontmatter ───────────────────────────────────────────────────────
 
 describe('parseFrontmatter', () => {
+  it('reads a quoted value without its quotes, escapes and all', () => {
+    const { meta } = parseFrontmatter(
+      [
+        '---',
+        'title: "Task #1: ship the \\"pane\\""',
+        "author: 'it''s me'",
+        'plain: a: b',
+        'tags: ["release notes", \'pane\', plain]',
+        '---',
+        'body',
+      ].join('\n'),
+    );
+    expect(meta.title).toBe('Task #1: ship the "pane"');
+    expect(meta.author).toBe("it's me");
+    expect(meta.plain).toBe('a: b');
+    expect(meta.tags).toEqual(['release notes', 'pane', 'plain']);
+  });
+
   it('parses valid frontmatter with title, tags, and updated', () => {
     const content =
       '---\ntitle: My Project\ntags: [a, b, c]\nupdated: 2026-01-01\n---\nBody text here.';
@@ -305,5 +323,18 @@ describe('deleteEntry', () => {
 
   it('rejects null bytes', () => {
     expect(() => deleteEntry(tmpDir, 'notes/\0evil.md')).toThrow('null bytes');
+  });
+
+  it('touches nothing that is no entry: not .md, hidden, in a hidden folder', () => {
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.git', 'config'), '[core]');
+    fs.writeFileSync(path.join(tmpDir, '.git', 'x.md'), '# x');
+    fs.writeFileSync(path.join(tmpDir, '.identity-declined'), '');
+    fs.writeFileSync(path.join(tmpDir, 'notes', 'data.json'), '{}');
+    for (const p of ['.git/config', '.git/x.md', '.identity-declined', 'notes/data.json']) {
+      expect(() => deleteEntry(tmpDir, p)).toThrow('Not a knowledge entry');
+      expect(() => readEntry(tmpDir, p)).toThrow('Not a knowledge entry');
+      expect(fs.existsSync(path.join(tmpDir, p))).toBe(true);
+    }
   });
 });

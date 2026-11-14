@@ -24,14 +24,20 @@ export interface MmrOptions<T> {
   sim: (a: T, b: T) => number;
   /** Query-relevance score for an item. Typically the retrieval ranker's score. */
   relevance: (x: T) => number;
+  /**
+   * Similarity at or above which a candidate is a copy of one already picked and is dropped,
+   * not just ranked lower: with no strong alternative MMR alone would still fill the k slots
+   * with copies. Default: 0.8.
+   */
+  duplicate?: number;
 }
 
 /**
  * Re-rank items using MMR. Returns a new array (does not mutate input).
  *
- * The returned array has length min(items.length, k) and is sorted by pick
- * order — first element is the highest-relevance item, subsequent elements
- * trade relevance for novelty.
+ * The returned array holds at most k items, sorted by pick order — first element
+ * is the highest-relevance item, subsequent elements trade relevance for
+ * novelty; copies of a picked item (`duplicate`) are left out.
  */
 export function rerankMMR<T>(items: readonly T[], options: MmrOptions<T>): T[] {
   const { sim, relevance } = options;
@@ -42,6 +48,11 @@ export function rerankMMR<T>(items: readonly T[], options: MmrOptions<T>): T[] {
   // Normalize lambda for safety — clamp to [0, 1].
   const lam = Math.max(0, Math.min(1, lambda));
 
+  // Relevance on the similarity's scale, [0, 1] against the best candidate: a raw score
+  // (BM25 runs to 20 and more) would outweigh any similarity, and nothing would be diversified.
+  const top = Math.max(...items.map(relevance));
+  const rel = (x: T) => (top > 0 ? relevance(x) / top : 0);
+
   const remaining: T[] = [...items];
   const selected: T[] = [];
 
@@ -49,24 +60,32 @@ export function rerankMMR<T>(items: readonly T[], options: MmrOptions<T>): T[] {
   remaining.sort((a, b) => relevance(b) - relevance(a));
   selected.push(remaining.shift()!);
 
+  const duplicate = options.duplicate ?? 0.8;
   while (selected.length < k && remaining.length > 0) {
-    let bestIdx = 0;
+    let bestIdx = -1;
     let bestScore = -Infinity;
 
-    for (let i = 0; i < remaining.length; i++) {
+    for (let i = remaining.length - 1; i >= 0; i--) {
       const candidate = remaining[i];
       let maxSim = 0;
       for (const s of selected) {
         const pairSim = sim(candidate, s);
         if (pairSim > maxSim) maxSim = pairSim;
       }
-      const score = lam * relevance(candidate) - (1 - lam) * maxSim;
-      if (score > bestScore) {
+      // A copy of a hit already picked says nothing new: it goes.
+      if (maxSim >= duplicate) {
+        remaining.splice(i, 1);
+        if (bestIdx > i) bestIdx--;
+        continue;
+      }
+      const score = lam * rel(candidate) - (1 - lam) * maxSim;
+      if (score >= bestScore) {
         bestScore = score;
         bestIdx = i;
       }
     }
 
+    if (bestIdx < 0) break;
     selected.push(remaining.splice(bestIdx, 1)[0]);
   }
 

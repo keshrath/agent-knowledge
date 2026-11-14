@@ -3,15 +3,23 @@ import {
   getProjectDirs,
   getSessionFiles,
   parseSessionFile,
+  readSessionFile,
   extractMessages,
   getSessionMeta,
+  promptsOf,
+  type SessionEntry,
+  type SessionMessage,
   type SessionMeta,
 } from './parser.js';
 import { getAvailableAdapters } from './adapters/index.js';
+import { branchName, projectName } from './human.js';
+import { withoutControls } from '../text.js';
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  /** The project as a person names it: its folder's name, not the store's slug. */
+  name: string;
   meta: SessionMeta;
   topicCount: number;
   topics: Array<{ timestamp: string | null; content: string }>;
@@ -23,75 +31,55 @@ export interface SessionSummary {
   packagesChanged: string[];
 }
 
-// ── File path extraction ────────────────────────────────────────────────────
-
-/**
- * Regex to match common file paths in tool results.
- * Captures paths like /src/foo.ts, ./bar.js, C:\path\file.py, etc.
- */
-const FILE_PATH_RE =
-  /(?:^|[\s"'`(])([./~]?(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|py|rs|go|java|vue|svelte|css|scss|html|json|yaml|yml|toml|md|txt|sh|sql|prisma|graphql|proto))\b/g;
-
-function extractFilePaths(text: string): string[] {
-  const paths = new Set<string>();
-  let match: RegExpExecArray | null;
-
-  // Reset lastIndex
-  FILE_PATH_RE.lastIndex = 0;
-
-  while ((match = FILE_PATH_RE.exec(text)) !== null) {
-    paths.add(match[1]);
-  }
-
-  return Array.from(paths);
-}
-
-/**
- * Extract tool names from tool_use entries.
- * The tool name is typically the first word or a JSON "name" field.
- */
-const TOOL_NAME_RE = /(?:"name"\s*:\s*"([^"]+)"|^(\w+(?:_\w+)*))/;
-
-function extractToolName(content: string): string | null {
-  const match = content.match(TOOL_NAME_RE);
-  return match ? (match[1] ?? match[2] ?? null) : null;
-}
-
 // ── Structured extraction (deterministic, no LLM) ─────────────────────────
 
-// Git commit SHAs — match 7-40 char hex strings preceded by commit-related context
-const GIT_COMMIT_RE = /\b([0-9a-f]{7,40})\b/g;
-const GIT_COMMIT_CONTEXT_RE = /(?:commit|merge|cherry-pick|revert|rebase|push|pull|checkout)\b/i;
+// Commits made in the session: the line `git commit` prints, `[main 9a8b7c6] Fix the sync`
+// (`[main (root-commit) 9a8b7c6]` for the first). A SHA merely shown (git log, a push's range)
+// was not made here.
+const GIT_COMMIT_RE = /^\[[^\]\s]+(?: \(root-commit\))? ([0-9a-f]{7,40})\] (.+)$/gm;
 
 function extractGitCommits(messages: Array<{ role: string; content: string }>): string[] {
-  const commits = new Set<string>();
+  const commits = new Map<string, string>();
   for (const msg of messages) {
     if (msg.role !== 'tool_result') continue;
-    // Only extract from output that looks like git output
-    if (!GIT_COMMIT_CONTEXT_RE.test(msg.content)) continue;
     GIT_COMMIT_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = GIT_COMMIT_RE.exec(msg.content)) !== null) {
-      const sha = match[1];
-      // Filter out common false positives (all-zeros, etc)
-      if (sha.length >= 7 && sha.length <= 40 && !/^0+$/.test(sha)) {
-        commits.add(sha.substring(0, 7)); // Normalize to short SHA
-      }
+      commits.set(match[1]!.substring(0, 7), match[2]!.trim());
     }
   }
-  return Array.from(commits).slice(0, 20);
+  return Array.from(commits, ([sha, subject]) => `${sha} ${subject}`).slice(0, 20);
 }
 
-// Error patterns — extract Error/Exception lines
-const ERROR_LINE_RE = /^.*(?:Error|Exception|FAIL|FATAL|panic|Traceback)[:.\s].{10,200}/gm;
+// Files changed: the path an editing or writing tool call names (Edit, Write, MultiEdit,
+// NotebookEdit; edit_file, write_file, apply_patch of other hosts).
+const CHANGING_TOOL_RE = /edit|write|create|patch|notebook/i;
+const PATH_ARGS = ['file_path', 'notebook_path', 'path', 'target_file', 'filePath'];
 
-function extractErrorPatterns(messages: Array<{ role: string; content: string }>): string[] {
+function extractChangedFiles(messages: SessionMessage[]): string[] {
+  const files = new Set<string>();
+  for (const msg of messages) {
+    if (!msg.tool || !CHANGING_TOOL_RE.test(msg.tool.name)) continue;
+    const key = PATH_ARGS.find((k) => typeof msg.tool!.input[k] === 'string');
+    if (key) files.add(String(msg.tool.input[key]));
+  }
+  return Array.from(files).sort();
+}
+
+// A line of tool output that reports an error, in any case and as a word: `FAILED tests/…`,
+// `psycopg2.errors.UniqueViolation: …`, `Error: …`. A count of none (`0 errors`) is not one.
+const ERROR_LINE_RE =
+  /^.*?(?<!\b0 )\b(?:errors?|exceptions?|fail(?:s|ed|ures?)?|fatal|panic|traceback)\b.*$/gim;
+
+export function extractErrorPatterns(messages: Array<{ role: string; content: string }>): string[] {
   const errors = new Set<string>();
   for (const msg of messages) {
     if (msg.role !== 'tool_result') continue;
+    // A coloured `[31mFAILED` is a word only once its escapes are gone.
+    const text = withoutControls(msg.content);
     ERROR_LINE_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
-    while ((match = ERROR_LINE_RE.exec(msg.content)) !== null) {
+    while ((match = ERROR_LINE_RE.exec(text)) !== null) {
       const line = match[0].trim();
       if (line.length > 10 && line.length < 200) {
         errors.add(line);
@@ -151,87 +139,80 @@ function extractPackageChanges(messages: Array<{ role: string; content: string }
 // ── Session summary ─────────────────────────────────────────────────────────
 
 /**
- * Generate a structured summary of a session.
- *
- * - Extracts user messages as topics (first 300 chars each)
- * - Collects unique tool names from tool_use entries
- * - Extracts file paths mentioned in tool results
+ * `text` to about `n` characters, never cut inside a word: a key cut short could fall below the
+ * length the scrubber's rule for it needs, and its first characters reach a snapshot.
+ */
+export function clip(text: string, n: number): string {
+  if (text.length <= n) return text;
+  const word = /^\S{0,1000}/.exec(text.slice(n))![0];
+  return `${text.slice(0, n)}${word}…`;
+}
+
+/** Where a session's transcript is on this machine: its project folder and its file. */
+export function findSession(
+  sessionId: string,
+  project?: string,
+): { project: { name: string; path: string }; file: string } | null {
+  for (const proj of getProjectDirs()) {
+    if (project && !proj.name.toLowerCase().includes(project.toLowerCase())) continue;
+    const match = getSessionFiles(proj.path).find((s) => s.id === sessionId);
+    if (match) return { project: proj, file: match.file };
+  }
+  return null;
+}
+
+/**
+ * A session's summary: what was asked (`promptsOf`, each to 300 characters), the tools called,
+ * the files changed, the commits made, the errors met. Null when no transcript holds the id.
  */
 export function getSessionSummary(sessionId: string, project?: string): SessionSummary | null {
-  const projects = getProjectDirs().filter(
-    (p) => !project || p.name.toLowerCase().includes(project.toLowerCase()),
-  );
+  const found = findSession(sessionId, project);
+  return found && summarize(found.project.name, parseSessionFile(found.file));
+}
 
-  for (const proj of projects) {
-    const sessions = getSessionFiles(proj.path);
-    const match = sessions.find((s) => s.id === sessionId);
-    if (!match) continue;
+/** getSessionSummary with the transcript read in slices: the REST holder keeps answering. */
+export async function loadSessionSummary(
+  sessionId: string,
+  project?: string,
+): Promise<SessionSummary | null> {
+  const found = findSession(sessionId, project);
+  return found && summarize(found.project.name, await readSessionFile(found.file));
+}
 
-    const entries = parseSessionFile(match.file);
-    if (entries.length === 0) return null;
+function summarize(store: string, entries: SessionEntry[]): SessionSummary | null {
+  if (entries.length === 0) return null;
 
-    const meta = getSessionMeta(entries);
-    const messages = extractMessages(entries);
+  const meta = getSessionMeta(entries);
+  const messages = extractMessages(entries);
+  const topics = promptsOf(entries).map((p) => ({
+    timestamp: p.timestamp,
+    content: clip(p.text, 300),
+  }));
 
-    // Topics: user messages truncated to 300 chars
-    // Filter out tool results, JSON blobs, base64 images, system reminders
-    const isHumanMessage = (text: string): boolean => {
-      const t = text.trimStart();
-      if (t.startsWith('[{') || t.startsWith('{"')) return false;
-      if (t.includes('tool_use_id') || t.includes('tool_result')) return false;
-      if (t.includes('base64') || t.includes('media_type')) return false;
-      if (t.includes('<system-reminder>')) return false;
-      if (t.length < 3) return false;
-      return true;
-    };
-
-    const topics = messages
-      .filter((m) => m.role === 'user')
-      .filter((m) => isHumanMessage(m.content))
-      .map((m) => ({
-        timestamp: m.timestamp,
-        content: m.content.length > 300 ? m.content.substring(0, 300) + '...' : m.content,
-      }));
-
-    // Tools: unique tool names from tool_use messages
-    const toolNames = new Set<string>();
-    for (const msg of messages) {
-      if (msg.role === 'tool_use') {
-        const name = extractToolName(msg.content);
-        if (name) toolNames.add(name);
-      }
-    }
-
-    // Files: paths mentioned in tool_result messages
-    const allFiles = new Set<string>();
-    for (const msg of messages) {
-      if (msg.role === 'tool_result') {
-        for (const fp of extractFilePaths(msg.content)) {
-          allFiles.add(fp);
-        }
-      }
-    }
-
-    // Structured extraction — deterministic, no LLM
-    const gitCommits = extractGitCommits(messages);
-    const errorPatterns = extractErrorPatterns(messages);
-    const urlsAccessed = extractUrls(messages);
-    const packagesChanged = extractPackageChanges(messages);
-
-    return {
-      meta,
-      topicCount: topics.length,
-      topics,
-      toolsUsed: Array.from(toolNames).sort(),
-      filesModified: Array.from(allFiles).sort(),
-      gitCommits,
-      errorPatterns,
-      urlsAccessed,
-      packagesChanged,
-    };
+  // Tools: the names the calls carry (mcp__agent-knowledge__knowledge whole)
+  const toolNames = new Set<string>();
+  for (const msg of messages) {
+    if (msg.tool) toolNames.add(msg.tool.name);
   }
 
-  return null;
+  // Structured extraction — deterministic, no LLM
+  const gitCommits = extractGitCommits(messages);
+  const errorPatterns = extractErrorPatterns(messages);
+  const urlsAccessed = extractUrls(messages);
+  const packagesChanged = extractPackageChanges(messages);
+
+  return {
+    name: projectName(meta.cwd, store),
+    meta,
+    topicCount: topics.length,
+    topics,
+    toolsUsed: Array.from(toolNames).sort(),
+    filesModified: extractChangedFiles(messages),
+    gitCommits,
+    errorPatterns,
+    urlsAccessed,
+    packagesChanged,
+  };
 }
 
 // ── List sessions ───────────────────────────────────────────────────────────
@@ -325,46 +306,27 @@ function fastMeta(filePath: string): SessionMeta | null {
     }
     fs.closeSync(fd);
 
-    const extractText = (content: unknown): string => {
-      if (typeof content === 'string') return content;
-      if (Array.isArray(content)) {
-        const parts = content
-          .filter(
-            (p) =>
-              typeof p === 'string' || (typeof p === 'object' && p !== null && p.type === 'text'),
-          )
-          .map((p) => (typeof p === 'string' ? p : p.text));
-        return parts.length > 0 ? parts.join('\n') : '';
-      }
-      return '';
-    };
-
-    let preview = '';
-    let userMessageCount = 0;
-    for (const line of headLines) {
-      try {
-        const entry = JSON.parse(line);
-        const role = entry.type ?? entry.role;
-        if (role === 'user') {
-          userMessageCount++;
-          if (!preview && entry.message?.content !== null && entry.message?.content !== undefined) {
-            const text = extractText(entry.message.content);
-            if (text) preview = text.substring(0, 200);
-          }
+    // What was asked, from the head; a session whose first prompt is not whole in it (a long
+    // paste) is read through, so a session with a prompt never reads as one without.
+    const parsed = (lines: string[]) =>
+      lines.flatMap((l) => {
+        try {
+          return [JSON.parse(l) as SessionEntry];
+        } catch {
+          return [];
         }
-      } catch {
-        continue;
-      }
-    }
+      });
+    let said = promptsOf(parsed(headLines));
+    if (said.length === 0 && stat.size > headSize) said = promptsOf(parseSessionFile(filePath));
 
     return {
       startTime: (first.timestamp as string) || 'unknown',
       endTime: (last.timestamp as string) || (first.timestamp as string) || 'unknown',
       cwd: (first.cwd as string) || '',
-      branch: (first.gitBranch as string) || '',
+      branch: branchName((first.gitBranch as string) || ''),
       messageCount: Math.max(1, Math.round(stat.size / 500)),
-      userMessageCount,
-      preview,
+      userMessageCount: said.length,
+      preview: (said[0]?.text ?? '').substring(0, 200),
     };
   } catch {
     return null;
@@ -407,12 +369,12 @@ function getCachedMeta(sess: { id: string; file: string }): SessionMeta | null {
 
 export function listSessions(
   project?: string,
-): Array<{ project: string; sessionId: string } & SessionMeta> {
+): Array<{ project: string; sessionId: string; name: string } & SessionMeta> {
   const projects = getProjectDirs().filter(
     (p) => !project || p.name.toLowerCase().includes(project.toLowerCase()),
   );
 
-  const results: Array<{ project: string; sessionId: string } & SessionMeta> = [];
+  const results: Array<{ project: string; sessionId: string; name: string } & SessionMeta> = [];
 
   for (const proj of projects) {
     const sessions = getSessionFiles(proj.path);
@@ -422,6 +384,7 @@ export function listSessions(
       results.push({
         project: proj.name,
         sessionId: sess.id,
+        name: projectName(meta.cwd, proj.name),
         ...meta,
       });
     }

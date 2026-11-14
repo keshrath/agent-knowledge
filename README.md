@@ -76,7 +76,7 @@ No configuration needed. Additional session roots can be added via the `AGENT_KN
 - **Deterministic pre-extraction in distillation** — session summaries now include git commits, error patterns, URLs accessed, and packages changed extracted via regex from bash/tool output (no LLM cost)
 - **Freshness metadata on every search hit** — every knowledge result carries `freshness: { body_age_days, last_accessed, access_count, verified_at, verification_age_days, evergreen }`. Agent reads the trust signal and decides; we impose no policy demotion.
 - **Per-category decay windows** — the "Unused" filter and bytype chart honor per-category thresholds (projects 180d, people 365d, decisions 90d, workflows 60d, notes 30d) so identity-shaped content doesn't look stale just because it isn't re-read weekly.
-- **Lifecycle hooks** — `SessionStart` auto-wakeup + ingest-freshness check, `UserPromptSubmit` first-prompt targeted injection, `PreCompact` memory-flush nudge + distill, `SessionEnd` distill. Six hook scripts total, all fail-open, each toggleable via an `AGENT_KNOWLEDGE_*` env var. See [`docs/HOOKS.md`](docs/HOOKS.md).
+- **Session lifecycle (Claude Code plugin)** — each conversation starts knowing what the knowledge base holds, who the person is (or asks them once) and whether the project's ingest is current; the first real prompt carries the entries that match it; the session is snapshotted into the knowledge base when it is compacted and when it ends, secrets scrubbed. No command hooks: the plugin's mod does it, fail-open, each part switchable by an `AGENT_KNOWLEDGE_*` env var. See [`docs/HOOKS.md`](docs/HOOKS.md).
 - **Replaces host auto-memory** — on hosts with a per-session memory system (Claude Code's `~/.claude/projects/*/memory/`, similar in other IDEs), route durable user facts and feedback to agent-knowledge instead. Auto-memory is machine-local and invisible to other machines; agent-knowledge is git-synced, cross-machine, searchable, and surfaces in wakeup. See the Claude Code integration note in [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md#persistent-memory--agent-knowledge-not-host-auto-memory).
 
 ## Codebase Ingestion
@@ -122,7 +122,7 @@ Add to your MCP client config (Claude Code, Cline, etc.):
 }
 ```
 
-The first MCP process also serves a local REST API on `127.0.0.1:3423` (what the hooks, the `/knowledge` pane and agent-tasks call); when it exits, another running session takes the port over.
+The first MCP process also serves a local REST API on `127.0.0.1:3423` (what the Claude Code plugin, the opencode plugin and agent-tasks call); when it exits, another running session takes the port over.
 
 See [Setup Guide](docs/SETUP.md) for client-specific instructions (Claude Code, Cursor, Windsurf, OpenCode).
 
@@ -133,7 +133,7 @@ claude plugin marketplace add keshrath/agent-knowledge
 claude plugin install agent-knowledge@agent-knowledge
 ```
 
-The plugin brings the MCP server, the `knowledge-ingest` skill and the `/knowledge` pane (Claude Code 2.1.289+).
+The plugin brings the MCP server, the `knowledge-ingest` skill and a mod (Claude Code 2.1.289+): the `/knowledge` pane and the [session lifecycle](docs/HOOKS.md). Use it in place of Option 1 in Claude Code; a hand-written `agent-knowledge` entry in `~/.claude.json` would list the tools twice. Coming from 2.x, run `node scripts/setup.js --host=claude` once: it removes the old command hooks from `settings.json`.
 
 ## MCP Tools (6)
 
@@ -228,22 +228,25 @@ Write-bench harness: `npm run bench:promote` — offline replay with auto-labeli
 
 Loopback only (`127.0.0.1`), JSON only. Every request goes through a guard: a foreign `Host` or any `Origin` header gets 403, a request body must be `application/json`. A `:path` with a slash is sent encoded (`notes%2Fx.md`).
 
-| Method | Endpoint                                | Caller                      | Description                                              |
-| ------ | --------------------------------------- | --------------------------- | -------------------------------------------------------- |
-| GET    | `/health`                               | pane, hooks                 | Status, version, entry count                             |
-| GET    | `/api/overview`                         | `/knowledge` pane           | Counts, categories, recent events                        |
-| GET    | `/api/knowledge?category=&tag=`         | pane                        | List entries with their scoring                          |
-| GET    | `/api/knowledge/search?q=&max_results=` | pane, opencode plugin       | Search the knowledge base                                |
-| GET    | `/api/knowledge/:path`                  | pane                        | Read one entry                                           |
-| GET    | `/api/knowledge/:path/links`            | pane                        | The entry's graph edges, each with the other end's title |
-| DELETE | `/api/knowledge/:path`                  | pane                        | Delete an entry (git synced)                             |
-| POST   | `/api/knowledge`                        | agent-tasks KnowledgeBridge | Write an entry (full write pipeline)                     |
-| POST   | `/api/knowledge/sync`                   | pane                        | git pull + push                                          |
-| GET    | `/api/analysis`                         | pane                        | Hubs and isolated entries                                |
-| GET    | `/api/sessions?limit=&offset=&project=` | pane                        | Sessions, paged: `{ sessions, total }`                   |
-| GET    | `/api/sessions/search?q=&role=`         | pane                        | Search sessions                                          |
-| GET    | `/api/sessions/:id/summary`             | pane                        | Session summary                                          |
-| POST   | `/api/events`                           | `sessionend-distill` hook   | A receipt the pane shows                                 |
+| Method | Endpoint                                     | Caller                      | Description                                                |
+| ------ | -------------------------------------------- | --------------------------- | ---------------------------------------------------------- |
+| GET    | `/health`                                    | pane                        | Status, version, `entries` (curated), `snapshots`          |
+| GET    | `/api/overview`                              | `/knowledge` pane           | `entries`, `snapshots`, curated `categories`, events       |
+| GET    | `/api/knowledge?category=&tag=`              | pane                        | List entries with their scoring                            |
+| GET    | `/api/knowledge/search?q=&max_results=&mmr=` | pane, mod, opencode plugin  | Search (`mmr`, `skip=sessions`, `min_terms=2`, `prompt`)   |
+| GET    | `/api/knowledge/:path`                       | pane                        | Read one entry (a snapshot: `session_on_machine`)          |
+| GET    | `/api/knowledge/:path/links`                 | pane                        | The entry's graph edges, each with the other end's title   |
+| DELETE | `/api/knowledge/:path`                       | pane                        | Delete an entry (git synced)                               |
+| POST   | `/api/knowledge`                             | agent-tasks KnowledgeBridge | Write an entry (full write pipeline)                       |
+| POST   | `/api/knowledge/sync`                        | pane                        | git pull + push                                            |
+| GET    | `/api/analysis?offset=&limit=`               | pane                        | Hubs; `sparse` paged (fewest links, title), `sparse_total` |
+| GET    | `/api/sessions?limit=&offset=&project=`      | pane                        | Sessions, paged: `{ sessions, total }`                     |
+| GET    | `/api/sessions/search?q=&role=`              | pane                        | Search sessions (each hit's project as `name`)             |
+| GET    | `/api/sessions/:id/summary`                  | pane                        | Session summary                                            |
+| POST   | `/api/sessions/:id/snapshot`                 | mod, opencode plugin        | `{ event, cwd? }`: the session into `sessions/<project>/`  |
+| GET    | `/api/wakeup?sections=&budget=`              | mod (first message)         | The wakeup bundle and `onboarding` (identity state)        |
+| GET    | `/api/ingest?cwd=`                           | mod (first message)         | The folder's ingest freshness                              |
+| POST   | `/api/events`                                | any host                    | `{ kind, message }`: a receipt the pane toasts             |
 
 ## Architecture
 
@@ -272,7 +275,7 @@ graph LR
 
     subgraph Clients
         AG[Agent Sessions]
-        PN["/knowledge pane<br/>hooks, agent-tasks"]
+        PN["/knowledge pane + mod<br/>agent-tasks"]
     end
 
     KB <-->|git pull/push| KM
@@ -402,7 +405,7 @@ All env vars live under the `AGENT_KNOWLEDGE_*` prefix. No host name is baked in
 | `AGENT_KNOWLEDGE_INDEX_VERBATIM`      | `true`              | Index raw session message chunks into the vector store so conversation is retrievable later. Set `false` to save disk at scale.   |
 | `AGENT_KNOWLEDGE_DATA_DIR`            | (platform config)   | Override the primary host data root. Leave unset in the common case — adapters auto-detect every well-known host root under `~/`. |
 | `AGENT_KNOWLEDGE_EXTRA_SESSION_ROOTS` | --                  | Extra session directories, comma-separated. Added to whatever auto-detection finds.                                               |
-| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Local REST API port (the `/knowledge` pane, hooks, agent-tasks)                                                                   |
+| `AGENT_KNOWLEDGE_PORT`                | `3423`              | Local REST API port (the Claude Code plugin, the opencode plugin, agent-tasks)                                                    |
 | `AGENT_KNOWLEDGE_HOST`                | `127.0.0.1`         | REST bind address                                                                                                                 |
 
 ### Embeddings
@@ -425,16 +428,16 @@ Project-scoped overrides win over the standard keys. Set either; the scoped form
 | `AGENT_KNOWLEDGE_ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | Claude / Voyage embeddings |
 | `AGENT_KNOWLEDGE_GEMINI_API_KEY`    | `GEMINI_API_KEY`    | Gemini embeddings          |
 
-### Hooks
+### Session lifecycle (Claude Code plugin, opencode plugin)
 
-| Variable                               | Default | Description                                                                                                                                               |
-| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_AUTOWAKE`             | `1`     | Auto-inject a `knowledge(action: wakeup)` bundle into `SessionStart`. Set `0` to disable.                                                                 |
-| `AGENT_KNOWLEDGE_WAKEUP_BUDGET`        | `800`   | Tokens for the wakeup bundle                                                                                                                              |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`     | Run a targeted `knowledge_search` on the first user prompt and inject top hits. `0` / `false` / `off` to disable.                                         |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`   | Tokens for first-prompt injection (clamp `[100, 8000]`)                                                                                                   |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`     | Max knowledge hits attached to the first prompt (clamp `[1, 20]`)                                                                                         |
-| `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE`     | `1`     | Before pre-compaction, nudge the agent to save context via `knowledge(action: write)`. `0` disables the nudge; `off` suppresses both nudge and disk dump. |
+| Variable                               | Default | Description                                                                                               |
+| -------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `AGENT_KNOWLEDGE_AUTOWAKE`             | `1`     | Who the person is (or the onboarding question) in the first message. `0` / `false` / `off` to disable.    |
+| `AGENT_KNOWLEDGE_WAKEUP_BUDGET`        | `200`   | Tokens for the identity section (clamp `[50, 4000]`)                                                      |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`     | The first real prompt carries the matching entries. `0` / `false` / `off` to disable.                     |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`   | Tokens for those entries (clamp `[100, 8000]`)                                                            |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `2`     | Entries at most (clamp `[1, 2]`)                                                                          |
+| `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE`     | `1`     | A compaction's summary keeps what is still to be saved. `0` / `false` leaves it; `off` takes no snapshot. |
 
 ### External tool overrides
 
@@ -444,10 +447,10 @@ Project-scoped overrides win over the standard keys. Set either; the scoped form
 
 ## Documentation
 
-- [Setup Guide](docs/SETUP.md) — installation, client setup (Claude Code, OpenCode, Cursor, Windsurf), hooks, skills
+- [Setup Guide](docs/SETUP.md) — installation, client setup (Claude Code, OpenCode, Cursor, Windsurf), skills
 - [Ingestion Guide](docs/INGEST.md) — codebase ingestion skill, tree-sitter extraction, incremental updates
 - [Architecture](docs/ARCHITECTURE.md) — source structure, design principles, database schema
-- [Hooks](docs/HOOKS.md) — the Claude Code lifecycle hooks
+- [Session lifecycle](docs/HOOKS.md) — what the Claude Code plugin does around each session
 - [Changelog](CHANGELOG.md)
 
 ## License

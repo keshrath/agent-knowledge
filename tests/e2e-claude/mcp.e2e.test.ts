@@ -1,7 +1,7 @@
 // =============================================================================
 // Every agent-knowledge MCP tool and action through the real Claude Code CLI
 //
-// `claude -p` loads only this repo's built server (dist/index.js) from a
+// `claude -p` loads only this repo's built server (dist-e2e/index.js) from a
 // scratch --mcp-config: its own HOME, APPDATA, knowledge dir (a clone of a
 // scratch bare repo), data dir with a seeded session, and a free REST port.
 // The model is told which calls to make; each test asserts the calls it made
@@ -24,7 +24,7 @@ import Database from 'better-sqlite3';
 const RUN = process.env.AGENT_KNOWLEDGE_E2E_CLAUDE === '1';
 const MODEL = process.env.AGENT_KNOWLEDGE_E2E_MODEL || 'haiku';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const ENTRY = path.join(REPO, 'dist', 'index.js');
+const ENTRY = path.join(REPO, 'dist-e2e', 'index.js');
 const CLAUDE = process.platform === 'win32' ? 'claude.exe' : 'claude';
 const SERVER = 'agent-knowledge';
 const T = (tool: string) => `mcp__${SERVER}__${tool}`;
@@ -221,7 +221,7 @@ describe.skipIf(!RUN)(
   () => {
     beforeAll(async () => {
       if (!fs.existsSync(ENTRY))
-        throw new Error('run `npm run build` first: dist/index.js is missing');
+        throw new Error('run `npm run e2e:claude` (it builds dist-e2e/index.js)');
       root = fs.mkdtempSync(path.join(os.tmpdir(), 'ak-mcp-e2e-'));
       const home = path.join(root, 'home');
       appData = path.join(home, 'AppData', 'Roaming');

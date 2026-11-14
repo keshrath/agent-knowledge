@@ -5,7 +5,8 @@
  * The dispatch map in server.ts routes tool calls here.
  */
 
-import { listEntries, readEntry, writeEntry, deleteEntry } from './knowledge/store.js';
+import { listEntries, readEntry, writeEntry } from './knowledge/store.js';
+import { removeKnowledgeEntry } from './knowledge/remove.js';
 import { gitPull, gitPush, gitSync, ensureRepo } from './knowledge/git.js';
 import { getKnowledgeGraph, RELATIONSHIP_TYPES, type RelationshipType } from './knowledge/graph.js';
 import { getEntryScoring } from './knowledge/scoring.js';
@@ -24,7 +25,11 @@ import { logQuery } from './knowledge/query-log.js';
 import { reflect } from './knowledge/reflect.js';
 import { indexKnowledgeEntry } from './sessions/indexer.js';
 import { searchSessions } from './sessions/search.js';
-import { searchKnowledge, invalidateKnowledgeIndexCache } from './knowledge/search.js';
+import {
+  searchKnowledge,
+  invalidateKnowledgeIndexCache,
+  warmKnowledgeIndex,
+} from './knowledge/search.js';
 import { listSessions, getSessionSummary } from './sessions/summary.js';
 import { wakeup, buildContextBundle, DEFAULT_SECTIONS, type SectionName } from './wakeup.js';
 import { promote } from './knowledge/promote.js';
@@ -224,13 +229,7 @@ export async function handleKnowledge(args: Record<string, unknown>): Promise<To
       return ok(response);
     }
     case 'delete': {
-      const entryPath = requireString(a, 'path');
-      await gitPull(config.memoryDir);
-      const deleted = deleteEntry(config.memoryDir, entryPath);
-      invalidateKnowledgeIndexCache();
-      invalidateBriefCache();
-      const pushResult = await gitPush(config.memoryDir);
-      return ok({ deleted, git: pushResult });
+      return ok(await removeKnowledgeEntry(config.memoryDir, requireString(a, 'path')));
     }
     case 'sync': {
       const result = await gitSync(config.memoryDir);
@@ -421,6 +420,7 @@ export async function handleKnowledgeSearch(args: Record<string, unknown>): Prom
   const mmr = optionalBoolean(a, 'mmr') ?? false;
   const mmrLambda = optionalNumber(a, 'mmr_lambda', 0, 1);
   const explain = optionalBoolean(a, 'explain') ?? false;
+  await warmKnowledgeIndex(config.memoryDir, categoryMode === 'filter' ? category : undefined);
   const knowledgeResults = searchKnowledge(config.memoryDir, query, {
     maxResults: 10,
     category,
@@ -537,7 +537,7 @@ export async function handleKnowledgeAdmin(args: Record<string, unknown>): Promi
 
         const newConfig = getConfig();
         if (gitUrlArg && gitUrlArg.length > 0) {
-          const repoResult = ensureRepo(newConfig.memoryDir, newConfig.gitUrl);
+          const repoResult = await ensureRepo(newConfig.memoryDir, newConfig.gitUrl);
           return ok({
             message: 'Config saved',
             repoSetup: repoResult,

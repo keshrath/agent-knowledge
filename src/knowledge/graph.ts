@@ -224,6 +224,14 @@ export class KnowledgeGraph {
     return result.changes;
   }
 
+  /** Removes every edge to or from `entry`: the entry is gone. */
+  forget(entry: string): number {
+    this.init();
+    if (!this.db) return 0;
+    return this.db.prepare('DELETE FROM edges WHERE source = ? OR target = ?').run(entry, entry)
+      .changes;
+  }
+
   /**
    * List edges, optionally filtered by entry path and/or relationship type.
    * If `asOf` is set, only edges valid at that date are returned.

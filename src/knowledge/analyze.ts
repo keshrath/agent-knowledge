@@ -51,6 +51,15 @@ export interface KnowledgeBrief {
 
 // ── God Nodes ────────────────────────────────────────────────────────────────
 
+/** The edges whose both ends exist: an entry, or a code node of an ingest. */
+function liveEdges<E extends { source: string; target: string }>(
+  edges: E[],
+  entries: { has(path: string): boolean },
+): E[] {
+  const isLive = (p: string) => p.startsWith('code:') || entries.has(p);
+  return edges.filter((e) => isLive(e.source) && isLive(e.target));
+}
+
 /**
  * Find the most-connected entries in the knowledge graph (degree centrality).
  * Excludes auto-distilled entries that only have auto-link edges (noise).
@@ -61,24 +70,25 @@ export function godNodes(dir: string, topN: number = 10): GodNode[] {
 
   if (allEdges.length === 0) return [];
 
-  // Count degree per entry
+  // Load entry metadata
+  // A session's record (a snapshot, a 2.x dump) is no knowledge to link: left out.
+  const entries = listEntries(dir).filter((e) => !e.snapshot);
+  const entryMap = new Map<string, KnowledgeEntry>();
+  for (const e of entries) {
+    entryMap.set(e.path, e);
+  }
+
+  // Count degree per entry; an edge to an entry no longer there counts for neither end
   const degree = new Map<string, number>();
   const hasManualEdge = new Set<string>();
 
-  for (const edge of allEdges) {
+  for (const edge of liveEdges(allEdges, entryMap)) {
     degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
     degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
     if (edge.origin !== 'auto-link') {
       hasManualEdge.add(edge.source);
       hasManualEdge.add(edge.target);
     }
-  }
-
-  // Load entry metadata
-  const entries = listEntries(dir);
-  const entryMap = new Map<string, KnowledgeEntry>();
-  for (const e of entries) {
-    entryMap.set(e.path, e);
   }
 
   // Sort by degree, filter out pure auto-link nodes and code graph nodes
@@ -233,14 +243,16 @@ export function gaps(dir: string, maxEntries: number = 30): Gap[] {
   const allEdges = graph.links();
   const scoring = getEntryScoring();
 
-  // Count degree per entry
+  // A session's record (a snapshot, a 2.x dump) is no knowledge to link: left out.
+  const entries = listEntries(dir).filter((e) => !e.snapshot);
+
+  // Count degree per entry; an edge to an entry no longer there counts for neither end
   const degree = new Map<string, number>();
-  for (const edge of allEdges) {
+  for (const edge of liveEdges(allEdges, new Set(entries.map((e) => e.path)))) {
     degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
     degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
   }
 
-  const entries = listEntries(dir);
   const result: Gap[] = [];
 
   for (const entry of entries) {

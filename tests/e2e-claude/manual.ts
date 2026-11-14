@@ -121,7 +121,7 @@ async function hero(w: World): Promise<Shot[]> {
       await t.enter();
       await t.waitFor(/Links 3/);
       await sleep(1_200);
-      await s.tabTo('depends on');
+      await s.tabTo('REST only, no WebSocket'); // the outgoing link: → depends on, then its title
       await t.enter();
       await t.waitFor(/decisions\/rest-only\.md/);
       await sleep(1_500);
@@ -180,7 +180,7 @@ async function docked(w: World): Promise<Shot[]> {
       await t.enter();
       await t.waitFor(/Links 3/);
       await sleep(1_500);
-      await s.tabTo('depends on');
+      await s.tabTo('REST only, no WebSocket'); // the outgoing link: → depends on, then its title
       await t.enter();
       await t.waitFor(/decisions\/rest-only\.md/);
       await sleep(1_200);
@@ -208,8 +208,10 @@ async function docked(w: World): Promise<Shot[]> {
 
     await s.clip('search', 'pane', async () => {
       await t.key('2');
-      await t.waitFor(/Finds words/);
+      await t.waitFor(/Press 2 again, or Enter on Search, to type/);
       await sleep(500);
+      await t.key('2');
+      await t.waitFor(/Tab leaves the field/);
       await s.typeSlowly('zebrafish');
       await t.key('ENTER');
       await t.waitFor(/Entries 1/);
@@ -219,7 +221,7 @@ async function docked(w: World): Promise<Shot[]> {
       await sleep(1_000);
     });
     await s.command('pane');
-    await t.waitFor(/Sessions 1/);
+    await t.waitFor(/In past sessions 1/);
     await s.still('search');
 
     await s.clip('sessions', 'pane', async () => {
@@ -237,7 +239,7 @@ async function docked(w: World): Promise<Shot[]> {
 
     await s.clip('health', 'pane', async () => {
       await t.key('4');
-      await t.waitFor(/Server\s+2\./);
+      await t.waitFor(/Server\s+3\./);
       await sleep(1_000);
       await s.tabTo('Analyze links');
       await t.enter();
@@ -257,12 +259,12 @@ async function docked(w: World): Promise<Shot[]> {
       await t.enter();
       await t.waitFor(/Delete README\.md\?/);
       await sleep(1_400);
-      await t.enter(); // Never mind
+      await t.enter(); // Keep it
       await sleep(800);
       await t.enter(); // Delete again
       await t.waitFor(/Delete README\.md\?/);
       await sleep(600);
-      await s.tabTo(/^\[ Delete \]$/, true);
+      await s.tabTo(/^\[ Delete README\.md \]$/, true);
       await sleep(500);
       await s.still('confirm-delete');
       await t.enter();
@@ -271,7 +273,7 @@ async function docked(w: World): Promise<Shot[]> {
     });
 
     await w.event('session-end', 'sess-pane-1 distilled into 2 entries');
-    await t.waitFor(/session-end: sess-pane-1 distilled/, 15_000);
+    await t.waitFor(/Session saved: sess-pane-1 distilled/, 15_000);
     await s.still('toast', 'full');
     return s.shots;
   } finally {
@@ -317,7 +319,7 @@ async function down(w: World): Promise<Shot[]> {
       await t.waitFor(/not reachable/);
       await sleep(1_500);
       await t.enter();
-      await t.waitFor(/still nothing at the port/);
+      await t.waitFor(/still nothing answers at/);
       await sleep(1_200);
       await w.startServer();
       await t.enter();

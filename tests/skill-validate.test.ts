@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -17,8 +18,10 @@ const VALIDATE_PATH = join(
   'validate.mjs',
 );
 
-const TMP_TARGET = join(__dirname, '__tmp_validate_target__');
-const TMP_KNOWLEDGE = join(__dirname, '__tmp_validate_knowledge__');
+// Folders of this run's own: a second test run in the same checkout must not wipe them.
+const TMP_ROOT = mkdtempSync(join(tmpdir(), 'ak-validate-'));
+const TMP_TARGET = join(TMP_ROOT, 'target');
+const TMP_KNOWLEDGE = join(TMP_ROOT, 'knowledge');
 
 function runValidate(
   targetPath: string,
@@ -50,6 +53,8 @@ afterEach(() => {
   if (existsSync(TMP_TARGET)) rmSync(TMP_TARGET, { recursive: true, force: true });
   if (existsSync(TMP_KNOWLEDGE)) rmSync(TMP_KNOWLEDGE, { recursive: true, force: true });
 });
+
+afterAll(() => rmSync(TMP_ROOT, { recursive: true, force: true }));
 
 describe('knowledge-ingest validate', () => {
   it('fails when no cache file exists', () => {

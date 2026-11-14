@@ -9,24 +9,33 @@
 import { existsSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { join } from 'node:path';
+import { listEntries, parseFrontmatter, readEntry, writeEntry } from '../knowledge/store.js';
 import {
-  deleteEntry,
-  getAllFiles,
-  listEntries,
-  readEntry,
-  writeEntry,
-} from '../knowledge/store.js';
-import { searchKnowledge, invalidateKnowledgeIndexCache } from '../knowledge/search.js';
+  searchKnowledge,
+  indexedEntries,
+  invalidateKnowledgeIndexCache,
+  warmKnowledgeIndex,
+} from '../knowledge/search.js';
 import { getEntryScoring, decayFactor, maturityMultiplier } from '../knowledge/scoring.js';
 import { getKnowledgeGraph } from '../knowledge/graph.js';
 import { gaps, godNodes, invalidateBriefCache } from '../knowledge/analyze.js';
 import { checkDuplicates } from '../knowledge/consolidate.js';
 import { gitPull, gitPush, gitSync } from '../knowledge/git.js';
+import { removeKnowledgeEntry } from '../knowledge/remove.js';
 import { getVectorStore, indexKnowledgeEntry } from '../sessions/indexer.js';
 import { searchSessions } from '../sessions/search.js';
-import { listSessions, getSessionSummary } from '../sessions/summary.js';
+import { findSession, listSessions, loadSessionSummary } from '../sessions/summary.js';
 import { getProjectDirs, getSessionFiles } from '../sessions/parser.js';
 import { recentEvents, recordEvent } from '../events.js';
+import { writeSessionSnapshot } from '../sessions/snapshot.js';
+import { ingestFreshness } from '../knowledge/ingest-freshness.js';
+import { promptSimilarity } from '../knowledge/similar.js';
+import {
+  buildContextBundle,
+  DEFAULT_SECTIONS,
+  identityState,
+  type SectionName,
+} from '../wakeup.js';
 import { getConfig } from '../types.js';
 import { getVersion } from '../version.js';
 import { HttpError, json, readBody, Router, type RouteHandler } from './http.js';
@@ -70,13 +79,29 @@ function readOr404(entryPath: string) {
   }
 }
 
+/**
+ * The knowledge base counted as the index holds it (files re-read only when changed): `entries`
+ * are the curated ones, as Browse lists them, `categories` theirs by folder (`other` at the
+ * top), `snapshots` the sessions' records (`isSnapshot`: the snapshots, the 2.x dumps).
+ */
+function countEntries(dir: string) {
+  const categories: Record<string, number> = {};
+  let snapshots = 0;
+  for (const e of indexedEntries(dir)) {
+    if (e.snapshot) snapshots++;
+    else {
+      const c = e.path.includes('/') ? e.category : 'other';
+      categories[c] = (categories[c] ?? 0) + 1;
+    }
+  }
+  const entries = Object.values(categories).reduce((a, b) => a + b, 0);
+  return { entries, snapshots, categories };
+}
+
 const healthRoute: RouteHandler = (_req, res) => {
-  json(res, {
-    status: 'ok',
-    version: getVersion(),
-    uptime: process.uptime(),
-    knowledge_entries: listEntries(getConfig().memoryDir).length,
-  });
+  const { entries, snapshots } = countEntries(getConfig().memoryDir);
+  // The holder's self-check asks this: the counts come from the folder listing alone.
+  json(res, { status: 'ok', version: getVersion(), uptime: process.uptime(), entries, snapshots });
 };
 
 const knowledgeListRoute: RouteHandler = (req, res) => {
@@ -89,11 +114,34 @@ const knowledgeListRoute: RouteHandler = (req, res) => {
   json(res, withScores(entries));
 };
 
-const knowledgeSearchRoute: RouteHandler = (req, res) => {
+/**
+ * GET /api/knowledge/search?q=…: `prompt=true` says `q` is a person's prompt, searched for what
+ * it asks about, a hit holding enough of its content terms (`searchKnowledge` `prompt`).
+ */
+/** How long a search waits for the index to be read before it says it is warming up. */
+const WARM_WAIT_MS = 4_000;
+
+const knowledgeSearchRoute: RouteHandler = async (req, res) => {
   const url = urlOf(req);
-  const results = searchKnowledge(getConfig().memoryDir, url.searchParams.get('q') || '', {
+  const dir = getConfig().memoryDir;
+  const q = url.searchParams.get('q') || '';
+  // A server just started on a large knowledge base is still reading it: a search waits for
+  // that a bounded while, then says so (503) rather than holding the caller past its timeout.
+  const isWarm = await Promise.race([
+    warmKnowledgeIndex(dir).then(() => true),
+    new Promise<boolean>((r) => setTimeout(() => r(false), WARM_WAIT_MS).unref()),
+  ]);
+  if (!isWarm) throw new HttpError(503, 'warming up: the search index is still being read');
+  const prompt = url.searchParams.get('prompt') === 'true';
+  // A prompt is judged by its meaning too, where embeddings are there (`promptSimilarity`).
+  const similar = prompt ? await promptSimilarity(q) : null;
+  const results = searchKnowledge(dir, q, {
     category: url.searchParams.get('category') || undefined,
     maxResults: url.searchParams.has('max_results') ? intParam(url, 'max_results', 20) : undefined,
+    mmr: url.searchParams.get('mmr') === 'true',
+    skipCategory: url.searchParams.get('skip') || undefined,
+    prompt,
+    ...(similar ? { similar } : {}),
   });
   const scores = getEntryScoring().getScores(results.map((r) => r.entry.path));
   json(
@@ -111,11 +159,18 @@ const knowledgeSearchRoute: RouteHandler = (req, res) => {
   );
 };
 
+/**
+ * GET /api/knowledge/:path: the entry and its scoring; a session snapshot also says whether its
+ * session's transcript is on this machine (`session_on_machine`), so it can be opened.
+ */
 const knowledgeEntryRoute: RouteHandler = (_req, res, params) => {
   const entry = readOr404(params.entryPath!);
   const score = getEntryScoring().getScore(params.entryPath!);
+  const { meta } = parseFrontmatter(entry.content);
+  const isSnapshot = meta.type === 'session-snapshot' && typeof meta.session === 'string';
   json(res, {
     ...entry,
+    ...(isSnapshot ? { session_on_machine: findSession(meta.session as string) !== null } : {}),
     maturity: score?.maturity ?? 'candidate',
     access_count: score?.access_count ?? 0,
     last_accessed: score?.last_accessed ?? null,
@@ -133,7 +188,10 @@ function titleOf(dir: string, entryPath: string): string | null {
   }
 }
 
-/** GET /api/knowledge/:path/links: its edges, each with the title of the entry at the other end. */
+/**
+ * GET /api/knowledge/:path/links: its edges, each with the title of the entry at the other end,
+ * and `missing` when that entry is not there.
+ */
 const knowledgeLinksRoute: RouteHandler = (_req, res, params) => {
   const dir = getConfig().memoryDir;
   const self = params.entryPath!;
@@ -141,7 +199,12 @@ const knowledgeLinksRoute: RouteHandler = (_req, res, params) => {
     res,
     getKnowledgeGraph()
       .links(self)
-      .map((e) => ({ ...e, title: titleOf(dir, e.source === self ? e.target : e.source) })),
+      .map((e) => {
+        const other = e.source === self ? e.target : e.source;
+        const title = titleOf(dir, other);
+        // An entry no longer there (a code node of an ingest is not an entry, and not missing).
+        return { ...e, title, missing: title === null && !other.startsWith('code:') };
+      }),
   );
 };
 
@@ -168,13 +231,67 @@ const sessionsSearchRoute: RouteHandler = async (req, res) => {
   );
 };
 
-const sessionSummaryRoute: RouteHandler = (req, res, params) => {
-  const summary = getSessionSummary(
+const sessionSummaryRoute: RouteHandler = async (req, res, params) => {
+  const summary = await loadSessionSummary(
     params.sessionId!,
     urlOf(req).searchParams.get('project') || undefined,
   );
   if (!summary) throw new HttpError(404, `Session ${params.sessionId} not found`);
   json(res, summary);
+};
+
+/**
+ * POST /api/sessions/:sessionId/snapshot { event: compact | end, cwd? }: the session's gist
+ * into the knowledge base (sessions/<project>/), and a live event saying so.
+ */
+const sessionSnapshotRoute: RouteHandler = async (req, res, params) => {
+  const body = await readBody(req, 4_096);
+  const event = body.event;
+  if (event !== 'compact' && event !== 'end') {
+    throw new HttpError(422, 'event must be "compact" or "end"');
+  }
+  const cwd = typeof body.cwd === 'string' ? body.cwd : undefined;
+  const snap = await writeSessionSnapshot(params.sessionId!, event, cwd);
+  if (!snap) throw new HttpError(404, `Session ${params.sessionId} not found`);
+  if (!snap.path) return json(res, snap);
+  invalidateOverview();
+  // What a person reads in the toast: the session by its title.
+  const evt = recordEvent(event === 'end' ? 'session-end' : 'compact', snap.title ?? snap.path);
+  json(res, { ...snap, event: evt.id });
+  // Committed (the snapshot alone, under its own message) and pushed after the answer: a file
+  // left changed would stop the next `pull --rebase`, and a push may wait on the network.
+  const dir = getConfig().memoryDir;
+  if (existsSync(join(dir, '.git'))) {
+    void gitPush(dir, `session ${event}: ${snap.title}`, [snap.path]).then((r) => {
+      if (!r.success) console.error('[knowledge] snapshot commit:', r.message);
+    });
+  }
+};
+
+/**
+ * GET /api/wakeup?sections=identity&budget=200: the wakeup bundle (as knowledge action=wakeup),
+ * whether the person still has to say who they are (`onboarding`) and the knowledge folder.
+ */
+const wakeupRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
+  const sections = (url.searchParams.get('sections') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s): s is SectionName => DEFAULT_SECTIONS.includes(s as SectionName));
+  const bundle = buildContextBundle({
+    tokenBudget: intParam(url, 'budget', 800),
+    ...(sections.length > 0 ? { sections } : {}),
+  });
+  const memoryDir = getConfig().memoryDir;
+  // The folder as it is on disk: where the model is told to write identity.md.
+  json(res, { ...bundle, onboarding: identityState(memoryDir), memory_dir: memoryDir });
+};
+
+/** GET /api/ingest?cwd=<folder>: whether the folder was ingested and what changed since. */
+const ingestRoute: RouteHandler = (req, res) => {
+  const cwd = urlOf(req).searchParams.get('cwd');
+  if (!cwd) throw new HttpError(422, 'Required: cwd');
+  json(res, ingestFreshness(cwd));
 };
 
 /** POST /api/events { kind, message }: a hook's receipt for the pane to show. */
@@ -266,19 +383,12 @@ export function invalidateOverview(): void {
 function countAll(): Record<string, unknown> {
   if (counted && Date.now() - counted.at < OVERVIEW_TTL) return counted.data;
   const config = getConfig();
-  const categories: Record<string, number> = {};
-  const paths = getAllFiles(config.memoryDir);
-  for (const p of paths) {
-    const c = p.includes('/') ? p.split('/')[0]! : 'other';
-    categories[c] = (categories[c] ?? 0) + 1;
-  }
   let sessions = 0;
   for (const p of getProjectDirs()) sessions += getSessionFiles(p.path).length;
   const vectors = getVectorStore().stats();
   const data = {
     version: getVersion(),
-    entries: paths.length,
-    categories,
+    ...countEntries(config.memoryDir),
     sessions,
     vectors: vectors.totalEntries,
     provider: vectors.provider,
@@ -296,19 +406,15 @@ const overviewRoute: RouteHandler = (_req, res) => {
 
 /** DELETE /api/knowledge/:entryPath: the MCP knowledge(action=delete) pipeline. */
 const knowledgeDeleteRoute: RouteHandler = async (_req, res, params) => {
-  const dir = getConfig().memoryDir;
-  await gitPull(dir);
-  let deleted: boolean;
+  let r: Awaited<ReturnType<typeof removeKnowledgeEntry>>;
   try {
-    deleted = deleteEntry(dir, params.entryPath!);
+    r = await removeKnowledgeEntry(getConfig().memoryDir, params.entryPath!);
   } catch (e) {
     throw new HttpError(400, e instanceof Error ? e.message : String(e));
   }
-  if (!deleted) throw new HttpError(404, `File not found: ${params.entryPath}`);
-  invalidateKnowledgeIndexCache();
-  invalidateBriefCache();
+  if (!r.deleted) throw new HttpError(404, `File not found: ${params.entryPath}`);
   invalidateOverview();
-  json(res, { deleted, git: await gitPush(dir) });
+  json(res, r);
 };
 
 /** POST /api/knowledge/sync: git pull then push, as knowledge(action=sync). */
@@ -320,12 +426,26 @@ const syncRoute: RouteHandler = async (_req, res) => {
 };
 
 /**
- * GET /api/analysis: the most linked entries (two links or more) and the ones with one link
- * or none, so no entry is in both.
+ * GET /api/analysis?offset=0&limit=30: the most linked entries (two links or more) and a page
+ * of the ones with one link or none (`sparse`, fewest links first, then by title; all of
+ * them counted in `sparse_total`), so no entry is in both.
  */
-const analysisRoute: RouteHandler = (_req, res) => {
+const analysisRoute: RouteHandler = (req, res) => {
+  const url = urlOf(req);
   const dir = getConfig().memoryDir;
-  json(res, { hubs: godNodes(dir, 5).filter((n) => n.degree >= 2), sparse: gaps(dir, 30) });
+  const sparse = gaps(dir, Infinity).sort(
+    (a, b) =>
+      a.degree - b.degree ||
+      a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }),
+  );
+  const offset = Math.max(0, intParam(url, 'offset', 0));
+  const limit = Math.min(Math.max(1, intParam(url, 'limit', 30)), 500);
+  json(res, {
+    hubs: godNodes(dir, 5).filter((n) => n.degree >= 2),
+    sparse: sparse.slice(offset, offset + limit),
+    sparse_total: sparse.length,
+    offset,
+  });
 };
 
 export function createRouter(): Router {
@@ -343,5 +463,8 @@ export function createRouter(): Router {
     .route('GET', '/api/sessions', sessionsListRoute)
     .route('GET', '/api/sessions/search', sessionsSearchRoute)
     .route('GET', '/api/sessions/:sessionId/summary', sessionSummaryRoute)
+    .route('POST', '/api/sessions/:sessionId/snapshot', sessionSnapshotRoute)
+    .route('GET', '/api/wakeup', wakeupRoute)
+    .route('GET', '/api/ingest', ingestRoute)
     .route('POST', '/api/events', eventsRoute);
 }

@@ -1,6 +1,9 @@
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 export interface GitResult {
   success: boolean;
@@ -10,58 +13,77 @@ export interface GitResult {
 const CATEGORIES = ['projects', 'people', 'decisions', 'workflows', 'notes'];
 
 /**
- * Run a git command safely using execFileSync (no shell).
+ * Runs git (no shell) without holding the process: a pull or push waiting on an unreachable
+ * remote must not stop the REST holder answering.
  */
-function execGit(args: string[], cwd: string, timeout: number): string {
+async function execGit(args: string[], cwd: string, timeout: number): Promise<string> {
   try {
-    const output = execFileSync('git', args, {
-      cwd,
-      stdio: 'pipe',
-      timeout,
-    });
-    return output ? output.toString().trim() : '';
+    const { stdout } = await execFileAsync('git', args, { cwd, timeout, windowsHide: true });
+    return stdout.trim();
   } catch (err: unknown) {
-    const e = err as { stderr?: Buffer; message?: string };
-    const msg = e.stderr ? e.stderr.toString().trim() : (e.message ?? String(err));
+    const e = err as { stderr?: string; message?: string };
+    const msg = e.stderr?.trim() || (e.message ?? String(err));
     throw new Error(`git ${args[0]} failed: ${msg}`, { cause: err });
   }
 }
 
 /**
+ * One git operation at a time per folder: two at once (a background push and a request's pull)
+ * would meet on git's index lock.
+ */
+const queues = new Map<string, Promise<unknown>>();
+function serial<T>(dir: string, run: () => Promise<T>): Promise<T> {
+  const next = (queues.get(dir) ?? Promise.resolve()).then(run, run);
+  queues.set(
+    dir,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+
+const failed = (err: unknown): GitResult => ({
+  success: false,
+  message: err instanceof Error ? err.message : String(err),
+});
+
+/**
  * Pull latest changes from remote with rebase.
  */
-export async function gitPull(dir: string): Promise<GitResult> {
-  try {
-    const output = execGit(['pull', '--rebase', '--quiet'], dir, 15_000);
-    return { success: true, message: output || 'up to date' };
-  } catch (err: unknown) {
-    return { success: false, message: err instanceof Error ? (err as Error).message : String(err) };
-  }
+export function gitPull(dir: string): Promise<GitResult> {
+  return serial(dir, async () => {
+    try {
+      const output = await execGit(['pull', '--rebase', '--quiet'], dir, 15_000);
+      return { success: true, message: output || 'up to date' };
+    } catch (err: unknown) {
+      return failed(err);
+    }
+  });
 }
 
 /**
- * Stage all changes, commit if dirty, and push.
- * Only commits when there are staged changes.
+ * Commits the changes (of `paths` alone when given, else all) when there are any, and pushes.
  */
-export async function gitPush(dir: string, commitMsg?: string): Promise<GitResult> {
+export function gitPush(dir: string, commitMsg?: string, paths?: string[]): Promise<GitResult> {
   const message = commitMsg ?? 'update knowledge base';
-  try {
-    execGit(['add', '-A'], dir, 5_000);
-
-    // Only commit if there are staged changes
+  return serial(dir, async () => {
     try {
-      execGit(['diff', '--cached', '--quiet'], dir, 5_000);
-      // No error means no changes — skip commit
-    } catch {
-      // diff --cached --quiet exits non-zero when there ARE changes
-      execGit(['commit', '-m', message], dir, 5_000);
+      await execGit(['add', ...(paths ? ['--', ...paths] : ['-A'])], dir, 5_000);
+      try {
+        // Exits non-zero when there are staged changes.
+        await execGit(
+          ['diff', '--cached', '--quiet', ...(paths ? ['--', ...paths] : [])],
+          dir,
+          5_000,
+        );
+      } catch {
+        await execGit(['commit', '-m', message, ...(paths ? ['--', ...paths] : [])], dir, 5_000);
+      }
+      await execGit(['push', '--quiet'], dir, 15_000);
+      return { success: true, message: 'pushed successfully' };
+    } catch (err: unknown) {
+      return failed(err);
     }
-
-    execGit(['push', '--quiet'], dir, 15_000);
-    return { success: true, message: 'pushed successfully' };
-  } catch (err: unknown) {
-    return { success: false, message: err instanceof Error ? (err as Error).message : String(err) };
-  }
+  });
 }
 
 /**
@@ -192,7 +214,7 @@ function scaffoldRepo(dir: string): void {
  * - If dir missing + no gitUrl → scaffold local-only dir
  * - If dir exists + is a git repo → no-op
  */
-export function ensureRepo(dir: string, gitUrl?: string): GitResult {
+export async function ensureRepo(dir: string, gitUrl?: string): Promise<GitResult> {
   const isGitRepo = existsSync(join(dir, '.git'));
 
   if (isGitRepo) {
@@ -201,18 +223,18 @@ export function ensureRepo(dir: string, gitUrl?: string): GitResult {
 
   if (!existsSync(dir) && gitUrl) {
     try {
-      execGit(['clone', gitUrl, dir], process.cwd(), 30_000);
+      await execGit(['clone', gitUrl, dir], process.cwd(), 30_000);
     } catch (err) {
       return { success: false, message: err instanceof Error ? err.message : String(err) };
     }
     scaffoldRepo(dir);
     try {
-      execGit(['add', '-A'], dir, 5_000);
-      execGit(['diff', '--cached', '--quiet'], dir, 5_000);
+      await execGit(['add', '-A'], dir, 5_000);
+      await execGit(['diff', '--cached', '--quiet'], dir, 5_000);
     } catch {
       try {
-        execGit(['commit', '-m', 'add scaffold files'], dir, 5_000);
-        execGit(['push', '--quiet'], dir, 15_000);
+        await execGit(['commit', '-m', 'add scaffold files'], dir, 5_000);
+        await execGit(['push', '--quiet'], dir, 15_000);
       } catch {
         /* push scaffold back may fail — that's ok */
       }
@@ -224,16 +246,16 @@ export function ensureRepo(dir: string, gitUrl?: string): GitResult {
 
   if (gitUrl) {
     try {
-      execGit(['init'], dir, 5_000);
-      execGit(['remote', 'add', 'origin', gitUrl], dir, 5_000);
-      execGit(['add', '-A'], dir, 5_000);
+      await execGit(['init'], dir, 5_000);
+      await execGit(['remote', 'add', 'origin', gitUrl], dir, 5_000);
+      await execGit(['add', '-A'], dir, 5_000);
       try {
-        execGit(['commit', '-m', 'init knowledge base'], dir, 5_000);
+        await execGit(['commit', '-m', 'init knowledge base'], dir, 5_000);
       } catch {
         /* no files to commit is fine */
       }
       try {
-        execGit(['push', '-u', 'origin', 'HEAD', '--quiet'], dir, 15_000);
+        await execGit(['push', '-u', 'origin', 'HEAD', '--quiet'], dir, 15_000);
       } catch {
         /* remote may have existing content — pull first next time */
       }

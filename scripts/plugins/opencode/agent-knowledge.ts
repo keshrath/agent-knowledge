@@ -1,33 +1,32 @@
 // =============================================================================
 // agent-knowledge opencode plugin
 //
-// Ports the Claude Code lifecycle hooks (session-start announce, first-prompt
-// knowledge injection, pre-compact save nudge, session-end distill) to
-// opencode's plugin API (@opencode-ai/plugin).
+// The session lifecycle the Claude Code mod (plugin/hooks/register.tsx) gives,
+// on opencode's plugin API (@opencode-ai/plugin):
+//   - session.created                 → names the knowledge base (toast)
+//   - chat.message                    → the first real prompt carries the matching entries
+//   - experimental.session.compacting → the summary is asked to keep what is still to be saved
+//   - session.deleted                 → the session snapshot (POST /api/sessions/:id/snapshot)
 //
-// Coverage vs. the Claude hook set:
-//   - session.created                → session-start.js (announce)
-//   - chat.message                   → first-prompt-inject.mjs (first-prompt KB inject)
-//   - experimental.session.compacting → precompact-flush.mjs (save-context nudge)
-//   - session.deleted                → sessionend-distill.mjs (session summary file)
+// The snapshot is the server's, as for Claude Code: read from opencode's
+// database by the session adapter, secrets scrubbed, committed under sessions/.
 //
-// Gaps (no opencode analog):
-//   - session-start-ingest.mjs       (paired with /knowledge-ingest skill)
-//   - precompact-distill.mjs         (opencode compaction doesn't expose the transcript)
-//   - L0 identity auto-load          (no additionalContext equivalent — use AGENTS.md)
+// Not here (no opencode analog): the identity / onboarding and ingest-freshness
+// context (use AGENTS.md), and the snapshot at compaction (opencode's compaction
+// does not expose the transcript).
 //
 // Register via opencode.json:
 //   {
 //     "plugin": ["agent-knowledge/opencode"]
 //   }
 //
-// Env vars (same as the Claude hooks):
+// Env vars (as for the Claude Code mod):
 //   AGENT_KNOWLEDGE_MEMORY_DIR            — knowledge base root (default ~/agent-knowledge)
 //   AGENT_KNOWLEDGE_DATA_DIR              — marker/cache dir (default <memory>/.data)
 //   AGENT_KNOWLEDGE_PORT                  — REST port for search (default 3423)
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT    — "0" / "false" / "off" to disable inject
 //   AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET    — max inject tokens (chars/4, clamped [100,8000])
-//   AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS  — max rendered hits (clamped [1,20])
+//   AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS  — max rendered hits (clamped [1,2])
 //
 // Fails open on every hook — any error is swallowed, the user is never blocked.
 // =============================================================================
@@ -66,8 +65,8 @@ function injectEnabled(): boolean {
 }
 
 function maxHits(): number {
-  const raw = parseInt(process.env.AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS ?? '4', 10);
-  return clamp(Number.isFinite(raw) && raw > 0 ? raw : 4, 1, 20);
+  const raw = parseInt(process.env.AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS ?? '2', 10);
+  return clamp(Number.isFinite(raw) && raw > 0 ? raw : 2, 1, 2);
 }
 
 function budgetChars(): number {
@@ -125,6 +124,11 @@ async function searchKnowledge(query: string): Promise<Hit[]> {
     const url = new URL(`${restUrl()}/api/knowledge/search`);
     url.searchParams.set('q', query);
     url.searchParams.set('max_results', String(maxHits()));
+    // As the Claude Code mod asks: near-copies once, no session snapshots, no hit on one word,
+    // the prompt searched for what it asks about (not "one line, no tools").
+    url.searchParams.set('mmr', 'true');
+    url.searchParams.set('skip', 'sessions');
+    url.searchParams.set('prompt', 'true');
     const resp = await fetch(url, { signal: AbortSignal.timeout(3000) });
     if (!resp.ok) return [];
     const data = (await resp.json()) as unknown;
@@ -154,12 +158,9 @@ function renderHits(hits: Hit[]): string {
   return out;
 }
 
-// ── Session-end distill ─────────────────────────────────────────────────────
+// ── Session snapshot ────────────────────────────────────────────────────────
 
 type ClientLike = {
-  session: {
-    messages: (opts: { path: { id: string } }) => Promise<unknown>;
-  };
   tui?: {
     showToast?: (opts: {
       body?: { title?: string; message: string; variant: string; duration?: number };
@@ -167,65 +168,15 @@ type ClientLike = {
   };
 };
 
-async function distillSession(sessionId: string, client: ClientLike): Promise<void> {
+/** The session's snapshot, written (scrubbed) by the server from opencode's own records. */
+async function snapshotSession(sessionId: string, cwd: string): Promise<void> {
   try {
-    const raw = await client.session.messages({ path: { id: sessionId } });
-    const list = Array.isArray((raw as { data?: unknown })?.data)
-      ? ((raw as { data: unknown[] }).data as unknown[])
-      : Array.isArray(raw)
-        ? (raw as unknown[])
-        : [];
-    if (!list.length) return;
-
-    let userTurns = 0;
-    let assistantTurns = 0;
-    let toolUses = 0;
-    const userPrompts: string[] = [];
-
-    for (const m of list) {
-      const entry = m as { info?: { role?: string }; parts?: unknown[] };
-      const role = entry.info?.role;
-      const parts = Array.isArray(entry.parts) ? entry.parts : [];
-      if (role === 'user') {
-        userTurns++;
-        const text = extractText(parts);
-        if (text && userPrompts.length < 20) userPrompts.push(text);
-      } else if (role === 'assistant') {
-        assistantTurns++;
-        for (const p of parts) {
-          if (p && typeof p === 'object' && (p as { type?: unknown }).type === 'tool') {
-            toolUses++;
-          }
-        }
-      }
-    }
-
-    const slug = sessionId.slice(0, 8);
-    const projectsDir = join(memoryDir(), 'projects');
-    ensureDir(projectsDir);
-    const outPath = join(projectsDir, `session-opencode-${slug}.md`);
-    const body =
-      [
-        '---',
-        'type: session-end',
-        `session: ${sessionId}`,
-        'host: opencode',
-        `ended: ${new Date().toISOString()}`,
-        `turns: ${userTurns}u/${assistantTurns}a`,
-        `tool_uses: ${toolUses}`,
-        '---',
-        '',
-        `# Session ${slug}`,
-        '',
-        '**Host**: opencode',
-        `**Turns**: ${userTurns} user / ${assistantTurns} assistant`,
-        `**Tool uses**: ${toolUses}`,
-        '',
-        '## First user prompts',
-        '',
-        ...userPrompts.map((p) => `- ${p.replace(/\s+/g, ' ').slice(0, 240)}`),
-      ].join('\n') + '\n';
-    writeFileSync(outPath, body);
+    await fetch(`${restUrl()}/api/sessions/${encodeURIComponent(sessionId)}/snapshot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'end', ...(cwd ? { cwd } : {}) }),
+      signal: AbortSignal.timeout(10_000),
+    });
   } catch {
     /* fail open */
   }
@@ -233,7 +184,7 @@ async function distillSession(sessionId: string, client: ClientLike): Promise<vo
 
 // ── Plugin entry point ──────────────────────────────────────────────────────
 
-export const AgentKnowledgePlugin: Plugin = async ({ client }) => {
+export const AgentKnowledgePlugin: Plugin = async ({ client, directory }) => {
   ensureDir(markerDir());
   const typedClient = client as unknown as ClientLike;
 
@@ -245,7 +196,7 @@ export const AgentKnowledgePlugin: Plugin = async ({ client }) => {
           const info = (event as { properties?: { info?: { id?: string } } }).properties?.info;
           if (info?.id) {
             // Resumed sessions reuse the same id — clear stale marker so first-prompt
-            // inject re-arms, matching the Claude session-start.js behaviour.
+            // inject re-arms, as a restarted Claude Code session does.
             const p = markerPath(info.id);
             if (existsSync(p)) {
               try {
@@ -272,7 +223,7 @@ export const AgentKnowledgePlugin: Plugin = async ({ client }) => {
             (event as { properties?: { info?: { id?: string }; sessionID?: string } }).properties
               ?.info?.id ||
             (event as { properties?: { sessionID?: string } }).properties?.sessionID;
-          if (id) await distillSession(id, typedClient);
+          if (id) await snapshotSession(id, directory);
         }
       } catch {
         /* fail open */

@@ -31,6 +31,16 @@ describe('gitPull', () => {
     cleanup(tmpDir);
   });
 
+  it('does not hold the process while git runs (an unreachable remote stops nothing else)', async () => {
+    const pull = gitPull(tmpDir);
+    let settled = false;
+    void pull.then(() => (settled = true));
+    // A synchronous git would have finished, and settled the promise, before this turn.
+    await new Promise((r) => setImmediate(r));
+    expect(settled).toBe(false);
+    await pull;
+  });
+
   it('surfaces a remote-related error message when pulling with no remote configured', async () => {
     const result = await gitPull(tmpDir);
     expect(result.success).toBe(false);
@@ -102,16 +112,16 @@ describe('ensureRepo', () => {
     }
   });
 
-  it('returns no-op for existing git repo', () => {
+  it('returns no-op for existing git repo', async () => {
     tmpDir = makeTmpGitRepo();
-    const result = ensureRepo(tmpDir);
+    const result = await ensureRepo(tmpDir);
     expect(result.success).toBe(true);
     expect(result.message).toContain('already exists');
   });
 
-  it('creates local-only dir with categories when no git URL', () => {
+  it('creates local-only dir with categories when no git URL', async () => {
     tmpDir = path.join(os.tmpdir(), `knowledge-ensure-${Date.now()}`);
-    const result = ensureRepo(tmpDir);
+    const result = await ensureRepo(tmpDir);
     expect(result.success).toBe(true);
     expect(result.message).toContain('local-only');
     expect(fs.existsSync(path.join(tmpDir, 'projects'))).toBe(true);
@@ -129,26 +139,26 @@ describe('ensureRepo', () => {
     expect(gitignore).toContain('*.pem');
   });
 
-  it('clones remote repo when dir does not exist and gitUrl provided', () => {
+  it('clones remote repo when dir does not exist and gitUrl provided', async () => {
     const sourceDir = makeTmpGitRepo();
     const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-bare-'));
     execSync(`git clone --bare "${sourceDir}" "${bareDir}/repo.git"`, { stdio: 'pipe' });
     cleanup(sourceDir);
 
     tmpDir = path.join(os.tmpdir(), `knowledge-clone-${Date.now()}`);
-    const result = ensureRepo(tmpDir, path.join(bareDir, 'repo.git'));
+    const result = await ensureRepo(tmpDir, path.join(bareDir, 'repo.git'));
     expect(result.success).toBe(true);
     expect(result.message).toContain('cloned');
     expect(fs.existsSync(path.join(tmpDir, '.git'))).toBe(true);
     cleanup(bareDir);
   });
 
-  it('inits repo with remote when dir exists but is not a git repo', () => {
+  it('inits repo with remote when dir exists but is not a git repo', async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-init-'));
     const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-bare2-'));
     execSync('git init --bare', { cwd: bareDir, stdio: 'pipe' });
 
-    const result = ensureRepo(tmpDir, bareDir);
+    const result = await ensureRepo(tmpDir, bareDir);
     expect(result.success).toBe(true);
     expect(result.message).toContain('initialized');
     expect(fs.existsSync(path.join(tmpDir, '.git'))).toBe(true);

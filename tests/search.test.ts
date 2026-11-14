@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { excerptText, searchKnowledge } from '../src/knowledge/search.js';
+import { buildExcerpt } from '../src/search/excerpt.js';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-search-test-'));
@@ -108,15 +109,24 @@ describe('searchKnowledge', () => {
       excerptText(
         '# Zebrafish\n\nThe zebrafish service\ndeploys with make ship.\n\n- REST stays\n- the dashboard is gone\n\n```\ncode\n```',
       ),
-    ).toBe('The zebrafish service deploys with make ship. · REST stays · the dashboard is gone');
+    ).toBe(
+      'The zebrafish service deploys with make ship. · REST stays · the dashboard is gone · code',
+    );
   });
 
-  it('drops what a code block holds and table separator rows from excerpts', () => {
+  it('keeps a short code line (a command), drops a long one, fences and table separators', () => {
     expect(
       excerptText(
-        'Build it:\n\n```sh\nnpm run build\ntsc\n```\n\n| a | b |\n|---|:---:|\n| 1 | 2 |\n\n~~~\nraw\n~~~\nDone.',
+        `Build it:\n\n\`\`\`sh\nnpm run build\n${'x'.repeat(90)}\n\`\`\`\n\n| a | b |\n|---|:---:|\n| 1 | 2 |\n\n~~~\nraw\n~~~\nDone.`,
       ),
-    ).toBe('Build it: · a, b · 1, 2 · Done.');
+    ).toBe('Build it: · npm run build · a, b · 1, 2 · raw · Done.');
+  });
+
+  it('centres an excerpt on the first query word found when the phrase is not there', () => {
+    const body = `${'Intro text about many other things. '.repeat(20)}Failover: run pg_ctl promote on the replica.`;
+    expect(buildExcerpt(body, 'how do I fail over the database with promote')).toContain(
+      'pg_ctl promote',
+    );
   });
 
   it('handles special regex characters in query gracefully', () => {

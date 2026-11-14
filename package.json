@@ -1,6 +1,6 @@
 {
   "name": "agent-knowledge",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Cross-session memory and recall for AI agents — git-synced knowledge base, knowledge graph, confidence scoring, hybrid semantic+TF-IDF search, auto-distillation with secrets scrubbing",
   "type": "module",
   "main": "dist/index.js",
@@ -43,8 +43,8 @@
     "bench:longmemeval:matrix": "tsx bench/longmemeval-matrix.ts",
     "bench:promote": "tsx bench/promote-bench.ts",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/ tests/",
-    "lint:fix": "eslint src/ tests/ --fix",
+    "lint": "eslint src/ tests/ plugin/",
+    "lint:fix": "eslint src/ tests/ plugin/ --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
@@ -52,8 +52,8 @@
     "plugin:check": "claude plugin validate plugin && claude plugin test plugin",
     "clean": "rm -rf dist",
     "prepare": "husky",
-    "e2e:claude": "npm run build && node tests/e2e-claude/run.mjs",
-    "manual:record": "npm run build && tsx tests/e2e-claude/manual.ts"
+    "e2e:claude": "tsc --outDir dist-e2e && node tests/e2e-claude/run.mjs",
+    "manual:record": "tsc --outDir dist-e2e && tsx tests/e2e-claude/manual.ts"
   },
   "keywords": [
     "mcp",
@@ -117,7 +117,7 @@
     "@huggingface/transformers": "3.8.1"
   },
   "lint-staged": {
-    "*.{ts,js}": [
+    "*.{ts,tsx,js,mjs}": [
       "prettier --write",
       "eslint --fix"
     ],

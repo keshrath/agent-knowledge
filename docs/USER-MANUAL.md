@@ -142,20 +142,18 @@ knowledge_admin with action "config", memory_dir "/custom/path/knowledge"
 knowledge_admin with action "config", auto_distill false
 ```
 
-### Lifecycle Hooks
+### The session lifecycle
 
-agent-knowledge ships six lifecycle hook scripts that integrate with Claude Code's event system. Running `node scripts/setup.js` installs all six into `~/.claude/settings.json`; on other hosts that don't support lifecycle hooks (Cursor, Windsurf), the MCP tools still work — you just lose the automatic context injection.
+With the Claude Code plugin installed, each session works with the knowledge base on its own; there is nothing to configure:
 
-| Script                     | Event            | Purpose                                                                   |
-| -------------------------- | ---------------- | ------------------------------------------------------------------------- |
-| `session-start.js`         | SessionStart     | Names the `/knowledge` pane + auto-loads the L0 identity into context     |
-| `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff    |
-| `first-prompt-inject.mjs`  | UserPromptSubmit | Query-targeted knowledge hits injected on the session's first real prompt |
-| `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context    |
-| `precompact-distill.mjs`   | PreCompact       | Lightweight text snapshot of recent user prompts                          |
-| `sessionend-distill.mjs`   | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                  |
+| When                             | What happens                                                                                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------------- |
+| The conversation's first message | The model knows what the knowledge base holds, who you are (or asks you once), and the ingest state |
+| Your first real prompt           | The entries that match it ride beside it; one line in the transcript names them                     |
+| A compaction                     | The session is snapshotted into `sessions/<project>/`; the summary keeps what is still to be saved  |
+| The session ending or `/clear`   | The session's last snapshot; open `/knowledge` panes toast it                                       |
 
-Every hook fails open — if a script errors, it logs to stderr and the session continues. Each hook has env-var toggles (`AGENT_KNOWLEDGE_AUTOWAKE`, `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`, `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE`, etc.) — see [`docs/HOOKS.md`](HOOKS.md) for the full reference, test coverage, and budget/threshold knobs.
+Every part fails open: with the server down the session goes on as without the plugin. Each has a switch (`AGENT_KNOWLEDGE_AUTOWAKE`, `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`, `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE`, budgets) — see [`docs/HOOKS.md`](HOOKS.md). Hosts without the plugin (Cursor, Windsurf) keep the MCP tools; OpenCode has its own plugin.
 
 ### Persistent Memory — agent-knowledge, not host auto-memory
 
@@ -200,7 +198,7 @@ Every picture below is from a recorded session in the real Claude Code CLI again
 | `/knowledge <words>` | Search, with the hits for the words (entries and past sessions)             |
 | `/knowledge <path>`  | that entry's page; `.md` may be left off (`/knowledge decisions/rest-only`) |
 
-The command answers in the conversation with the counts (`8 entries · 2 sessions`), how many hits a search found, which entry it opened (`opened REST only, no WebSocket`), or why nothing answers. The pane opens beside the conversation in the fullscreen layout, above the prompt otherwise.
+The command's reply goes to the model too, so it says something only when something is wrong: nothing found for the words, no such entry, nothing answers at the port, or the pane could not be shown (then with the counts). Plain `/knowledge` shows every entry, clearing a Find or category left from before. The pane opens beside the conversation in the fullscreen layout, above the prompt otherwise; an open pane is opened afresh.
 
 ![Opening the pane](images/manual/open.gif)
 
@@ -224,7 +222,7 @@ The same line shows what an action is doing (`searching "zebrafish"…`) and how
 
 ![Browse](images/manual/browse.png)
 
-Every entry, newest first. Under each title: its category, `evergreen` for entries kept from decay, its maturity once it is past `candidate` (`established`, `proven`), its first tags and how long ago it was updated. Files at the top of the knowledge folder are under `other`. An entry another session writes or deletes shows on the next poll, without a key; the ring stays on the row it held.
+Every entry, newest first. Under each title: its category, `evergreen` for entries kept from decay, its maturity once it is past `candidate` (`established`, `proven`), its first tags and how long ago it was updated. Files at the top of the knowledge folder are under `other`; the session snapshots are their own category, `snapshots`, last in the bar and not in `all`. An entry another session writes or deletes shows on the next poll, without a key; the ring stays on the row it held, and while the pane has the keyboard the rows keep their order (a new one comes at the end). An empty knowledge base offers the next step: **Ingest &lt;project&gt; ›** puts `/knowledge-ingest <folder>` in the prompt for you to run.
 
 ![Browse, the whole screen](images/manual/browse-full.png)
 
@@ -238,7 +236,7 @@ The category bar narrows the list; the counts are the knowledge base's.
 
 ![Finding by a tag](images/manual/find.gif)
 
-A long list comes 25 rows at a time: `▸ 25 more (n left)` adds the next page and puts the ring on its first row.
+A long list comes 25 rows at a time: `▸ 25 more` adds the next page and puts the ring on its first row, shown whole.
 
 ### An entry
 
@@ -248,11 +246,11 @@ Its title, path, category, maturity, how often agents read it and when it was up
 
 ![Following a link and back](images/manual/entry.gif)
 
-The body is drawn as Markdown, without its frontmatter (those are the facts above) and without a first heading that only repeats the title. A long body folds after 30 lines: `▸ Show all n lines`.
+The body is drawn as Markdown, without its frontmatter (those are the facts above) and without a first heading that only repeats the title. Code is drawn apart, a dim `│` before each line: a long command that wraps continues indented, with no bar, so it never reads as a second one. Links in the text are listed with the links (`→ mentions`); a table too wide for the pane reads a row a line, each value with its header (`Owner: alice`). A long body folds after 30 lines: `▸ Show all n lines`. The page follows its file: an edit from another session shows on the next poll, said (`! notes/x.md changed elsewhere`), and an entry deleted elsewhere takes you back to the list (`! notes/x.md was deleted elsewhere`).
 
 ![Folding a long body](images/manual/fold.gif)
 
-**Delete** is at the end of the page and asks first, with the ring on **Never mind**; the confirmation says what happens: without a git remote the file goes from this machine, with one the deletion is pushed too, and a remote that refuses is said with it (`✓ deleted notes/x.md (not pushed: …)`).
+**Delete** is at the end of the page and asks first, with **Keep it** first and the ring on it, and **Delete notes/x.md** beside it. The question says what happens: without a git remote the file goes from this machine for good, with one the deletion is pushed too (its git history keeps it), and how many entries that link to it lose that link. A remote that refuses is said as a warning (`! deleted notes/x.md, not pushed: …`).
 
 ![Delete asks first](images/manual/confirm-delete.png)
 
@@ -262,13 +260,13 @@ The body is drawn as Markdown, without its frontmatter (those are the facts abov
 
 ![Search](images/manual/search.png)
 
-Search finds words, and close spellings, in every entry and in past sessions (Claude Code, Cursor, OpenCode). Best matches first: **Entries** with their category and a line of the text around the match, then **Sessions** with the project, when, whether you asked it or the agent answered, and the line. An excerpt is the entry's text without its headings and code blocks, paragraphs, list items and table rows joined with `·`. The ring lands on the best hit; `Enter` opens it. With no hit the line under the tabs says so: a search typed in the field keeps the ring there to try again, and one run as `/knowledge <words>` leaves the ring on a button, so the next command you type runs as a command.
+Search finds words, and close spellings, in every entry and in past sessions (Claude Code, Cursor, OpenCode). Best matches first: **Entries** with their category and a line of the text around the match, then **In past sessions** with the project, when, whether you asked it or the agent answered, and the line. An excerpt is the entry's text without its headings and code blocks, paragraphs, list items and table rows joined with `·`. The ring lands on the best hit; `Enter` opens it. `2` again (or `Enter` on the tab) puts the ring in the field with the last search's words, to edit. With no hit the page says so: a search typed in the field keeps the ring there to try again, and one run as `/knowledge <words>` leaves the ring on a button, so the next command you type runs as a command.
 
 ![Searching and opening a hit](images/manual/search.gif)
 
 ### Sessions
 
-The recent sessions on this machine, newest first: project, when it started, how long it ran, the git branch and the first thing asked. A session opens on its summary: what was asked, files changed, commits, errors (in red) and the tools used.
+The recent sessions on this machine, newest first: the project's folder name (this session marked `(this session)`), when it started, how long it ran, the git branch and the first thing asked (a slash command is not a question). Sessions where nothing was asked, a `/clear` alone say, are folded behind `▸ n more where nothing was asked`. `▸ 25 more` goes on past the newest 100, loading older sessions from the server. A session opens on its summary: how many prompts, its id and how to resume it (`claude --resume <id>`), what was asked, files changed, commits, errors (in red) and the tools used. A session snapshot's page opens its session when its transcript is on this machine, and back leads to the snapshot.
 
 ![A session's summary](images/manual/session.png)
 
@@ -278,15 +276,15 @@ The recent sessions on this machine, newest first: project, when it started, how
 
 ![Health](images/manual/health.png)
 
-How many entries (by category) and sessions there are, whether search uses meaning too (`words and meaning: n vectors`) or words only, where the knowledge folder is and whether a git remote syncs it. **Sync now** (shown with a remote) pulls and pushes. **Analyze links** lists the most linked entries (two links or more) and, apart from them, the ones with one link or none: those are the entries nothing much leads to. The folder is cut from the left to fit (`…\knowledge`). **Recent activity** lists what the hooks reported, such as a session distilled at its end.
+How many entries (by category), session snapshots and sessions there are, whether search uses meaning too (`words and meaning: n vectors`) or words only, where the knowledge folder is and whether a git remote syncs it, and whether this project's code is ingested (**Ingest &lt;project&gt; ›** when it was never, or files changed since). **Sync now** (shown with a remote) pulls and pushes; the ring never lands on it by itself. **Recent activity** lists what was reported, such as a session saved or a sync that failed. **Analyze links** lists the most linked entries (two links or more) and, apart from them, the ones with one link or none, fewest first, 30 at a time (`▸ 30 more`): those are the entries nothing much leads to. The folder is shown whole, wrapped when long.
 
 ![Analyzing the links](images/manual/health.gif)
 
 ### Status line, toasts and what the model sees
 
-The status line under the prompt reads `agent-knowledge: 8 entries · 2 sessions`, from the moment a session starts; `offline` when nothing answers, `old server x on the port` when an agent-knowledge from before the pane does.
+The status line under the prompt reads `agent-knowledge: 8 entries · 2 sessions`, from the moment a session starts; `offline` when nothing answers, `old server x on the port` when an agent-knowledge from before the pane does. While the pane is shown it says the last outcome for its 10 seconds (it may be scrolled out of view). Outcomes are marked: ✓ done, ✗ failed or refused, ! changed elsewhere, – nothing happened.
 
-A live event (a session distilled at its end) is toasted once, beside the conversation, and listed under Health.
+A live event (a session saved at its end) is toasted once, beside the conversation (`Session saved: demo · 2026-11-13 · fix the sync`; three at most, then `+n more`), and listed under Health. A project never ingested, or files changed since its ingest, is toasted once with the conversation's first message.
 
 ![A toast](images/manual/toast.png)
 
@@ -302,7 +300,7 @@ Docked in the fullscreen layout the pane takes the right side of the window; on 
 
 ### When the server is away
 
-One agent-knowledge MCP process serves the REST API on `127.0.0.1:3423`; when its session ends another one takes the port over within a few seconds. While nothing answers, the pane says so and offers only **Refresh**; it comes back by itself on the next poll.
+One agent-knowledge MCP process serves the REST API on `127.0.0.1:3423`; when its session ends another one takes the port over within a few seconds. While nothing answers, the pane says so and **Refresh** tries again (`✗ still nothing answers at http://127.0.0.1:3423 (12:04:31)`); the tabs stay, so `1`–`4` never land in the prompt, and it comes back by itself on the next poll.
 
 ![The server away](images/manual/server-down.png)
 
@@ -835,40 +833,50 @@ knowledge_analyze with action "search_gaps", since_days 7, min_count 3
 
 ## 6. REST API Reference
 
-The first MCP process serves a local REST API on `127.0.0.1:3423` (`AGENT_KNOWLEDGE_PORT`); the other sessions retry the port and take it over when that process exits. It is what the `/knowledge` pane, the hook scripts, the opencode plugin and agent-tasks call. Loopback only: a foreign `Host` or any `Origin` header gets 403, request bodies must be `application/json`, no CORS. A `:path` with a slash is sent encoded (`projects%2Fbackend.md`).
+The first MCP process serves a local REST API on `127.0.0.1:3423` (`AGENT_KNOWLEDGE_PORT`); the other sessions retry the port and take it over when that process exits. It is what the Claude Code plugin (the `/knowledge` pane and the session lifecycle), the opencode plugin and agent-tasks call. Loopback only: a foreign `Host` or any `Origin` header gets 403, request bodies must be `application/json`, no CORS. A `:path` with a slash is sent encoded (`projects%2Fbackend.md`).
 
 ### Health
 
 ```
-GET  /health                              Status, version, uptime, knowledge entry count
+GET  /health                              Status, version, uptime, entries (curated) and snapshots
 ```
 
 ### Knowledge Entries
 
 ```
-GET     /api/overview                     Counts, categories, recent events (the pane)
+GET     /api/overview                     entries (curated), snapshots, categories (curated), recent events (the pane)
 GET     /api/knowledge                    List entries with scoring (?category=&tag=)
-GET     /api/knowledge/search             Search entries (?q=&category=&max_results=)
-GET     /api/knowledge/:path              Read entry content (enriched with score data); 404 when missing
+GET     /api/knowledge/search             Search entries (?q=&category=&max_results=&mmr=true&skip=sessions&min_terms=2&prompt=true; prompt: q is a prompt, reply-format phrases dropped)
+GET     /api/knowledge/:path              Read entry content (enriched with score data; a snapshot adds session_on_machine); 404 when missing
 GET     /api/knowledge/:path/links        Graph edges for an entry, each with the other end's title
 DELETE  /api/knowledge/:path              Delete an entry (git synced)
 POST    /api/knowledge                    Write an entry: { category, filename, content } -> 201 { path, git, autoLinks?, duplicateWarnings? }
 POST    /api/knowledge/sync               git pull + push
-GET     /api/analysis                     Hubs and isolated entries (the pane)
+GET     /api/analysis                     { hubs, sparse, sparse_total, offset } (?offset=&limit=30): sparse fewest links first, then by title
 ```
 
 ### Sessions
 
 ```
-GET  /api/sessions                        Sessions, paged: { sessions, total } (?project=&limit=&offset=; limit default 50, max 500)
-GET  /api/sessions/search                 Search sessions (?q=&role=&max_results=&ranked=&project=&semantic=)
+GET  /api/sessions                        Sessions, paged: { sessions, total } (?project=&limit=&offset=; limit default 50, max 500);
+                                          userMessageCount = real prompts (no /commands), preview '' without one
+GET  /api/sessions/search                 Search sessions (?q=&role=&max_results=&ranked=&project=&semantic=); hits carry name
 GET  /api/sessions/:id/summary            Session summary (?project=); 404 when unknown
+POST /api/sessions/:id/snapshot           { event: compact|end, cwd? } -> { path, prompts, messages, tools }: the session into
+                                          sessions/<project>/<day>-<id>.md (path null: nothing was asked); 404 when unknown
+```
+
+### Session lifecycle
+
+```
+GET  /api/wakeup                          The wakeup bundle (?sections=identity,...&budget=) and onboarding: configured|declined|pending
+GET  /api/ingest                          The folder's ingest freshness (?cwd=): state none|never|current|stale, project, counts
 ```
 
 ### Events
 
 ```
-POST /api/events                          { kind, message } -> 201 { id, ts }: a receipt the /knowledge pane shows (the sessionend hook)
+POST /api/events                          { kind, message } -> 201 { id, ts }: a receipt the /knowledge pane toasts (any host)
 ```
 
 ### Example Requests

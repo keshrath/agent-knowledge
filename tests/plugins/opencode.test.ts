@@ -4,11 +4,11 @@
 // Imports scripts/plugins/opencode/agent-knowledge.ts directly, builds mock
 // client + event payloads, asserts the plugin fails open, respects the
 // first-prompt gating, and emits shape-correct side effects (marker file,
-// session-end summary, compacting context, prepended text part).
+// session snapshot request, compacting context, prepended text part).
 // =============================================================================
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,9 +19,6 @@ type Hooks = Awaited<ReturnType<typeof AgentKnowledgePlugin>>;
 function makeClient(overrides: Partial<Record<string, unknown>> = {}) {
   const toasts: Array<{ title?: string; message: string; variant: string }> = [];
   const client = {
-    session: {
-      messages: vi.fn(async (_opts: { path: { id: string } }) => ({ data: [] })),
-    },
     tui: {
       showToast: vi.fn(
         async (opts: { body?: { title?: string; message: string; variant: string } }) => {
@@ -186,6 +183,13 @@ describe('chat.message (first-prompt inject)', () => {
     expect(injected.text).toContain('Knowledge — top hits');
 
     expect(existsSync(join(scratch, '.data', '.first-prompt-seen', 'sess-real'))).toBe(true);
+    // As the Claude Code mod asks: near-copies once, no snapshots, no hit on one shared word.
+    const asked = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(Object.fromEntries(asked.searchParams)).toMatchObject({
+      mmr: 'true',
+      skip: 'sessions',
+      prompt: 'true',
+    });
     expect(toasts.some((t) => t.message.startsWith('injected 2 hit'))).toBe(true);
   });
 
@@ -262,52 +266,40 @@ describe('experimental.session.compacting', () => {
   });
 });
 
-describe('event: session.deleted → distill', () => {
-  it('writes a session summary file to projects/', async () => {
+describe('event: session.deleted → the server snapshots the session', () => {
+  it('posts the snapshot for the session, with the folder, and writes nothing itself', async () => {
     const { client } = makeClient();
-    client.session.messages = vi.fn(async () => ({
-      data: [
-        { info: { role: 'user' }, parts: [{ type: 'text', text: 'first user prompt goes here' }] },
-        {
-          info: { role: 'assistant' },
-          parts: [
-            { type: 'text', text: 'assistant reply' },
-            { type: 'tool', name: 'read' },
-            { type: 'tool', name: 'grep' },
-          ],
-        },
-        {
-          info: { role: 'user' },
-          parts: [{ type: 'text', text: 'second user prompt also lands here' }],
-        },
-      ],
-    })) as typeof client.session.messages;
-
-    const hooks = await loadPlugin(client);
+    const hooks = await AgentKnowledgePlugin({
+      client: client as never,
+      project: { id: 'test' } as never,
+      directory: '/work/app',
+      worktree: '',
+      experimental_workspace: { register: () => undefined },
+      serverUrl: new URL('http://localhost:0'),
+      $: (() => ({})) as never,
+    });
 
     await hooks.event!({
       event: {
         type: 'session.deleted',
-        properties: { info: { id: 'sess-12345678-abcdef' } },
+        properties: { info: { id: 'ses_12345678abcdef' } },
       } as never,
     });
 
-    const outPath = join(scratch, 'projects', 'session-opencode-sess-123.md');
-    expect(existsSync(outPath)).toBe(true);
-    const body = readFileSync(outPath, 'utf-8');
-    expect(body).toContain('host: opencode');
-    expect(body).toContain('turns: 2u/1a');
-    expect(body).toContain('tool_uses: 2');
-    expect(body).toContain('first user prompt goes here');
-    expect(body).toContain('second user prompt also lands here');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/sessions\/ses_12345678abcdef\/snapshot$/);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ event: 'end', cwd: '/work/app' });
+    // Unscrubbed prompts no longer land in the git-synced knowledge base.
+    expect(existsSync(join(scratch, 'projects'))).toBe(false);
   });
 
-  it('fails open when client.session.messages rejects', async () => {
+  it('fails open when the server is down', async () => {
     const { client } = makeClient();
-    client.session.messages = vi.fn(async () => {
-      throw new Error('session not found');
-    }) as typeof client.session.messages;
-
+    fetchSpy.mockImplementation(async () => {
+      throw new Error('ECONNREFUSED');
+    });
     const hooks = await loadPlugin(client);
 
     await expect(

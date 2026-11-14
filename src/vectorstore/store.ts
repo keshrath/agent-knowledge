@@ -412,6 +412,37 @@ export class VectorStore {
   }
 
   /**
+   * Every knowledge chunk's vector `provider` made, by entry path, when the stored ones changed
+   * since `seen` (their count and last row); null when they did not. Read whole: a prompt is
+   * compared with each entry (the vector index ranks sessions and entries together).
+   */
+  knowledgeVectors(
+    provider: string,
+    dimensions: number,
+    seen?: string,
+  ): { stamp: string; vectors: Map<string, Float32Array[]> } | null {
+    const db = this.requireConnection(dimensions);
+    const head = db
+      .prepare(
+        "SELECT count(*) AS n, max(rowid) AS last FROM embeddings WHERE source = 'knowledge' AND provider = ? AND dimensions = ?",
+      )
+      .get(provider, dimensions) as { n: number; last: number | null };
+    const stamp = `${head.n}:${head.last ?? 0}`;
+    if (stamp === seen) return null;
+    const vectors = new Map<string, Float32Array[]>();
+    const rows = db
+      .prepare(
+        "SELECT source_id, embedding FROM embeddings WHERE source = 'knowledge' AND provider = ? AND dimensions = ?",
+      )
+      .all(provider, dimensions) as Array<{ source_id: string; embedding: Buffer }>;
+    for (const r of rows) {
+      const v = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, dimensions);
+      vectors.set(r.source_id, [...(vectors.get(r.source_id) ?? []), v]);
+    }
+    return { stamp, vectors };
+  }
+
+  /**
    * Delete all embeddings for a given source_id.
    */
   deleteBySource(sourceId: string): void {

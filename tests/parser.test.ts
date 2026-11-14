@@ -6,6 +6,7 @@ import {
   parseSessionFile,
   extractMessages,
   getSessionMeta,
+  promptsOf,
   getSessionFiles,
   getProjectDirs,
 } from '../src/sessions/parser.js';
@@ -141,7 +142,37 @@ describe('extractMessages', () => {
     ];
     const msgs = extractMessages(entries);
     expect(msgs.map((m) => m.role)).toEqual(['assistant', 'tool_use']);
-    expect(JSON.parse(msgs[1].content)).toEqual({ name: 'Read', input: { path: 'src/a.ts' } });
+    // A line as a person reads it; the call itself rides beside it.
+    expect(msgs[1].content).toBe('Read src/a.ts');
+    expect(msgs[1].tool).toEqual({ name: 'Read', input: { path: 'src/a.ts' } });
+  });
+
+  it('reads a tool call by its most telling argument, whatever the host recorded', () => {
+    const msgs = extractMessages([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 't1',
+              name: 'Bash',
+              input: { command: 'git push\n  --force-with-lease', description: 'push' },
+            },
+            { type: 'tool_use', id: 't2', name: 'TodoWrite', input: { todos: [] } },
+          ],
+        },
+      },
+      // A host that records the call as JSON text of its own.
+      { type: 'tool_use', content: '{"name": "Grep", "input": {"pattern": "TODO"}}' },
+    ]);
+    expect(msgs.map((m) => m.content)).toEqual([
+      'Bash git push --force-with-lease',
+      'TodoWrite',
+      'Grep TODO',
+    ]);
+    expect(msgs.every((m) => !m.content.includes('{'))).toBe(true);
   });
 
   it('turns tool results nested in a user entry into tool_result messages, not user text', () => {
@@ -311,11 +342,43 @@ describe('getSessionMeta', () => {
     expect(meta.messageCount).toBe(0);
   });
 
-  it('returns N/A preview when no user messages', () => {
+  it('has no preview and no prompt when nothing was asked', () => {
     const entries = [
       { type: 'assistant', timestamp: '2026-01-01T10:00:00Z', message: { content: 'hi' } },
     ];
-    expect(getSessionMeta(entries).preview).toBe('N/A');
+    expect(getSessionMeta(entries)).toMatchObject({ preview: '', userMessageCount: 0 });
+  });
+
+  it('counts and previews prompts only: no slash command, nothing the host wrote (isMeta)', () => {
+    const entries = [
+      {
+        type: 'user',
+        timestamp: '2026-01-01T10:00:00Z',
+        message: { content: '<command-name>/clear</command-name>' },
+      },
+      {
+        type: 'user',
+        timestamp: '2026-01-01T10:00:01Z',
+        isMeta: true,
+        message: { content: 'Another Claude session sent a message while you were working' },
+      },
+      { type: 'user', timestamp: '2026-01-01T10:00:02Z', message: { content: 'fix the sync' } },
+    ];
+    expect(getSessionMeta(entries)).toMatchObject({ preview: 'fix the sync', userMessageCount: 1 });
+  });
+
+  it('a compaction summary in the person turn is no prompt', () => {
+    const entries = [
+      { type: 'user', timestamp: '2026-01-01T10:00:00Z', message: { content: 'fix the sync' } },
+      {
+        type: 'user',
+        timestamp: '2026-01-01T11:00:00Z',
+        isCompactSummary: true,
+        message: { content: 'This session is being continued from a previous conversation…' },
+      },
+    ];
+    expect(getSessionMeta(entries)).toMatchObject({ preview: 'fix the sync', userMessageCount: 1 });
+    expect(promptsOf(entries).map((p) => p.text)).toEqual(['fix the sync']);
   });
 
   it('truncates preview to 200 chars', () => {

@@ -3,7 +3,7 @@
 //
 // A scratch world: its own knowledge folder (Markdown entries), data dir
 // (sessions, the graph and scoring database), HOME and port, seeded before the
-// REST server (dist/rest-server.js, started alone) runs on it. Claude Code runs
+// REST server (dist-e2e/rest-server.js, started alone) runs on it. Claude Code runs
 // in a pseudo-terminal (node-pty) and is rendered by @xterm/headless; the
 // screen text is what the tests assert on. Nothing touches the user's REST
 // server (127.0.0.1:3423) or knowledge base (~/agent-knowledge).
@@ -12,7 +12,7 @@
 // the user settings file, so its `enabledPlugins`, hooks, status line and `env`
 // do not load; auth still comes from the normal credentials store. The plugin
 // under test is a scratch copy of plugin/ whose .mcp.json runs this checkout's
-// dist/index.js on the scratch world, on a port of its own: the pane talks to
+// dist-e2e/index.js on the scratch world, on a port of its own: the pane talks to
 // the world's server alone, so stopping it is seen as down.
 // =============================================================================
 
@@ -26,9 +26,14 @@ import pty from 'node-pty';
 import xterm from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { SEED, entryFile, type Seed, type SeedEntry } from './seed.js';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
-export const DIST = join(ROOT, 'dist');
+/**
+ * The build under test: `npm run e2e:claude` compiles into dist-e2e/, so a run never rewrites
+ * the dist/ that running sessions' MCP servers were started from.
+ */
+export const DIST = join(ROOT, 'dist-e2e');
 export const SHOTS_DIR =
   process.env.AGENT_KNOWLEDGE_E2E_SHOTS ??
   join(
@@ -65,165 +70,6 @@ export function killTree(pid: number | undefined): void {
   }
 }
 
-/** One entry the seed writes: its path under the knowledge folder, frontmatter and body. */
-export type SeedEntry = {
-  path: string;
-  title: string;
-  tags?: string[];
-  updated?: string;
-  evergreen?: boolean;
-  author?: string;
-  body: string;
-};
-
-export type SeedSession = {
-  project: string;
-  id: string;
-  cwd: string;
-  branch?: string;
-  /** [role, text or content blocks (tool_use, tool_result), ISO time] */
-  lines: ['user' | 'assistant', string | Record<string, unknown>[], string][];
-};
-
-export type Seed = {
-  entries: SeedEntry[];
-  sessions: SeedSession[];
-  /** [source, target, rel_type, origin] */
-  edges: [string, string, string, string][];
-  /** Entry paths read this many times (their maturity follows the reads). */
-  reads: Record<string, number>;
-};
-
-const LONG_BODY = [
-  '# The /knowledge pane',
-  '',
-  'The web dashboard is gone; the pane is the way in.',
-  '',
-  ...Array.from({ length: 45 }, (_, i) => `- point ${i + 1}: something worth keeping`),
-  '',
-  '```ts',
-  "const pane = 'agent-knowledge';",
-  '```',
-].join('\n');
-
-/**
- * A knowledge base a person would recognise: projects with links between them, a decision,
- * a workflow kept evergreen, a person, notes, one long entry, one with a wide-character title,
- * a file at the top of the folder, and two sessions with something to summarise.
- */
-export const SEED: Seed = {
-  entries: [
-    {
-      path: 'projects/agent-tasks.md',
-      title: 'agent-tasks 2.0',
-      tags: ['release', 'pane'],
-      updated: '2026-10-22',
-      author: 'claude-code',
-      body: '# agent-tasks 2.0\n\nThe board moved into the **/pipeline** pane.\n\n- REST stays on 3422\n- the dashboard is gone',
-    },
-    {
-      path: 'projects/agent-knowledge.md',
-      title: 'agent-knowledge 2.0',
-      tags: ['release', 'pane'],
-      updated: '2026-10-23',
-      body: LONG_BODY,
-    },
-    {
-      path: 'decisions/rest-only.md',
-      title: 'REST only, no WebSocket',
-      tags: ['architecture'],
-      updated: '2026-10-18',
-      body: '# REST only\n\nChose: plain REST polling.\nOver: a WebSocket.\nBecause: the pane polls anyway.',
-    },
-    {
-      path: 'workflows/release.md',
-      title: 'Release ritual',
-      tags: ['release'],
-      updated: '2026-10-15',
-      evergreen: true,
-      body: '# Release ritual\n\n1. build\n2. prettier\n3. eslint\n4. test\n5. tag and push',
-    },
-    {
-      path: 'people/maintainer.md',
-      title: 'The maintainer',
-      updated: '2026-09-01',
-      body: '# The maintainer\n\nPrefers net-negative diffs.',
-    },
-    {
-      path: 'notes/zebrafish.md',
-      title: 'Zebrafish deploy recipe',
-      tags: ['deploy'],
-      updated: '2026-10-10',
-      body: '# Zebrafish\n\nThe zebrafish service deploys with `make ship`.',
-    },
-    {
-      path: 'notes/wide.md',
-      title: '設計レビューの記録とメモ 🚀 release notes',
-      updated: '2026-10-05',
-      body: '# 設計\n\nWide characters take two columns.',
-    },
-    {
-      path: 'README.md',
-      title: 'About this folder',
-      updated: '2026-08-01',
-      body: 'What lives here.',
-    },
-  ],
-  sessions: [
-    {
-      project: 'agent-tasks',
-      id: 'sess-pane-1',
-      cwd: 'C:/work/agent-tasks',
-      branch: 'main',
-      lines: [
-        ['user', 'move the board into a Claude Code pane', '2026-10-22T08:00:00.000Z'],
-        [
-          'assistant',
-          'Edited plugin/hooks/view.tsx and ran the tests.',
-          '2026-10-22T08:05:00.000Z',
-        ],
-        ['user', 'now test it in the real CLI with the quokka harness', '2026-10-22T09:00:00.000Z'],
-        ['assistant', 'Error: TypeError: x is undefined, fixed it.', '2026-10-22T09:30:00.000Z'],
-      ],
-    },
-    {
-      project: 'agent-knowledge',
-      id: 'sess-sync-2',
-      cwd: 'C:/work/agent-knowledge',
-      lines: [
-        ['user', 'why did the git sync break', '2026-10-21T08:00:00.000Z'],
-        [
-          'assistant',
-          [
-            { type: 'text', text: 'Pushing again to see what the remote says.' },
-            { type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'git push' } },
-          ],
-          '2026-10-21T08:05:00.000Z',
-        ],
-        [
-          'user',
-          [
-            {
-              type: 'tool_result',
-              tool_use_id: 'tu-1',
-              content:
-                "push of commit 4e5f6a7 from src/knowledge/git.ts\nError: failed to push some refs to 'origin' (non-fast-forward)",
-            },
-          ],
-          '2026-10-21T08:06:00.000Z',
-        ],
-        ['assistant', 'The remote rejected the push.', '2026-10-21T08:20:00.000Z'],
-      ],
-    },
-  ],
-  edges: [
-    ['projects/agent-knowledge.md', 'projects/agent-tasks.md', 'related_to', 'manual'],
-    ['projects/agent-tasks.md', 'decisions/rest-only.md', 'depends_on', 'manual'],
-    ['workflows/release.md', 'projects/agent-tasks.md', 'related_to', 'auto-link'],
-  ],
-  reads: { 'projects/agent-tasks.md': 6, 'decisions/rest-only.md': 2 },
-};
-
 export interface World {
   dir: string;
   memoryDir: string;
@@ -242,7 +88,7 @@ export interface World {
   event(kind: string, message: string): Promise<void>;
   stopServer(): Promise<void>;
   startServer(): Promise<void>;
-  /** Starts an MCP process (dist/index.js) of its own on the world's port: it takes over REST when free. */
+  /** Starts an MCP process (dist-e2e/index.js) of its own on the world's port: it takes over REST when free. */
   startMcp(): ChildProcess;
   stop(): Promise<void>;
 }
@@ -253,20 +99,6 @@ async function health(base: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function entryFile(e: SeedEntry): string {
-  const fm = [
-    '---',
-    `title: ${e.title}`,
-    ...(e.tags?.length ? [`tags: [${e.tags.join(', ')}]`] : []),
-    ...(e.updated ? [`updated: ${e.updated}`] : []),
-    ...(e.evergreen ? ['evergreen: true'] : []),
-    ...(e.author ? [`author: ${e.author}`] : []),
-    '---',
-    '',
-  ];
-  return `${fm.join('\n')}${e.body}\n`;
 }
 
 /** Writes the seed: entry files, session files, and the graph and reads through dist. */
@@ -316,8 +148,15 @@ function writeSeed(memoryDir: string, dataDir: string, seed: Seed) {
   });
 }
 
-/** Scratch folders + REST server, seeded; the plugin copy pointed at them. */
-export async function startWorld(seed: Seed = SEED, port?: number): Promise<World> {
+/**
+ * Scratch folders + REST server, seeded; the plugin copy pointed at them. `extra` adds to the
+ * world's REST server's environment only (e.g. a session root to read the live session from).
+ */
+export async function startWorld(
+  seed: Seed = SEED,
+  port?: number,
+  extra: Record<string, string> = {},
+): Promise<World> {
   const dir = mkdtempSync(join(tmpdir(), 'agent-knowledge-e2e-claude-'));
   const home = join(dir, 'home');
   const memoryDir = join(dir, 'knowledge');
@@ -341,6 +180,8 @@ export async function startWorld(seed: Seed = SEED, port?: number): Promise<Worl
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     ...scratch,
+    // The world's server alone: the plugin's own MCP process is not the one under test.
+    ...extra,
     AGENT_KNOWLEDGE_PORT: String(restPort),
   };
   delete env.AGENT_KNOWLEDGE_GIT_URL;
@@ -357,12 +198,15 @@ export async function startWorld(seed: Seed = SEED, port?: number): Promise<Worl
   const startServer = async () => {
     let out = '';
     const url = pathToFileURL(join(DIST, 'rest-server.js')).href;
+    const searchUrl = pathToFileURL(join(DIST, 'knowledge', 'search.js')).href;
     const child = spawn(
       process.execPath,
       [
         '--input-type=module',
         '-e',
-        `const m = await import(${JSON.stringify(url)}); await m.startRestServer(${restPort});`,
+        // As the process holding the port does: the knowledge index is warmed as it starts.
+        `const m = await import(${JSON.stringify(url)}); await m.startRestServer(${restPort});` +
+          `const k = await import(${JSON.stringify(searchUrl)}); await k.warmKnowledgeIndex(${JSON.stringify(memoryDir)});`,
       ],
       { env, windowsHide: true },
     );
@@ -477,12 +321,16 @@ export class ClaudeTerm {
   private readonly serializer = new SerializeAddon();
   private proc: pty.IPty | null = null;
 
-  /** `env` adds to the world's, e.g. CLAUDE_CODE_NO_FLICKER=1 for the fullscreen layout. */
+  /**
+   * `env` adds to the world's, e.g. CLAUDE_CODE_NO_FLICKER=1 for the fullscreen layout; `cwd` is
+   * the folder the session runs in (a shared empty one by default).
+   */
   constructor(
     private readonly world: World,
     readonly cols = 120,
     readonly rows = 50,
     private readonly env: Record<string, string> = {},
+    readonly cwd = WORKSPACE,
   ) {
     this.term = new xterm.Terminal({ cols, rows, allowProposedApi: true });
     this.term.loadAddon(this.serializer as never);
@@ -496,7 +344,7 @@ export class ClaudeTerm {
    * /knowledge is registered. The default is the entry and session counts.
    */
   async start(ready = /agent-knowledge: .*\d+ (entry|entries)/): Promise<void> {
-    mkdirSync(WORKSPACE, { recursive: true });
+    mkdirSync(this.cwd, { recursive: true });
     const exe = process.platform === 'win32' ? 'claude.exe' : 'claude';
     this.proc = pty.spawn(
       exe,
@@ -512,7 +360,7 @@ export class ClaudeTerm {
         name: 'xterm-256color',
         cols: this.cols,
         rows: this.rows,
-        cwd: WORKSPACE,
+        cwd: this.cwd,
         env: { ...this.world.claudeEnv, ...this.env },
       },
     );
@@ -567,6 +415,22 @@ export class ClaudeTerm {
   }
 
   /**
+   * The prompt box's draft: the lines between its two rules, `❯` left out. Docked, the pane
+   * is drawn right of it on the same lines: the part left of the pane's border is the box's.
+   */
+  prompt(): string {
+    const lines = this.text().split('\n');
+    const top = lines.findLastIndex((l, i) => l.startsWith('─') && lines[i + 1]?.startsWith('❯'));
+    if (top < 0) return '';
+    const box: string[] = [];
+    for (const l of lines.slice(top + 1)) {
+      if (l.startsWith('─')) break;
+      box.push(l.split('│')[0].trim());
+    }
+    return box.join('').replace(/^❯\s*/, '');
+  }
+
+  /**
    * How the first cell showing `label` (searched from column `from` on) is drawn: its
    * foreground colour (-1 for the terminal's default), dim and bold.
    */
@@ -609,6 +473,15 @@ export class ClaudeTerm {
     await sleep(pause);
   }
 
+  /** Types `text` a key at a time, `ms` apart: a person typing fast, not a paste. */
+  async typeKeys(text: string, ms: number): Promise<void> {
+    for (const ch of text) {
+      this.proc!.write(ch);
+      await sleep(ms);
+    }
+    await sleep(400);
+  }
+
   /**
    * What holds the focus: a Button is drawn inverted; a focused Input shows its submit hint
    * after the field, so its whole line stands for it.
@@ -618,7 +491,11 @@ export class ClaudeTerm {
     const ring = /«([^»]*)»/.exec(s)?.[1]?.trim();
     if (ring) return ring;
     const input = s.split('\n').find((l) => SUBMIT_HINT.test(l));
-    return input ? input.replace(/^[\s│]+|[\s│]+$/g, '') : null;
+    if (!input) return null;
+    // Docked, the conversation is drawn left of the pane on the same line: the part right of
+    // the pane's border is the field's.
+    const line = input.replace(/[\s│]+$/, '');
+    return line.slice(line.lastIndexOf('│') + 1).trim();
   }
 
   /**
@@ -678,26 +555,28 @@ export class ClaudeTerm {
    * once the command has answered: keys sent while it still runs are queued for the prompt.
    */
   async knowledge(args = ''): Promise<void> {
-    const answered = () => {
+    // The reply is silent unless something is wrong, so no `⎿` line need come: the command
+    // is done once it left the prompt and nothing runs (no "esc to interrupt") for a while.
+    const typed = `/knowledge${args ? ` ${args}` : ''}`;
+    const isRunning = () => {
       const lines = this.text().split('\n');
-      const asked = lines.findLastIndex((l) => /^❯ \/knowledge/.test(l));
-      return (
-        asked >= 0 &&
-        lines.slice(asked + 1).some((l) => /^\s+⎿/.test(l)) &&
-        !/esc to interrupt/.test(lines.slice(-4).join('\n'))
-      );
+      // The prompt box (the line under a rule) still holding the command, or a turn running.
+      const inBox = lines.some((l, i) => i > 0 && /^─/.test(lines[i - 1]!) && l.startsWith('❯ /'));
+      return inBox || /esc to interrupt/.test(lines.slice(-4).join('\n'));
     };
-    await this.type(`/knowledge${args ? ` ${args}` : ''}`);
+    await this.type(typed);
     await sleep(300);
     await this.key('ENTER');
     const deadline = Date.now() + 30_000;
-    while (!answered()) {
+    let quietSince = 0;
+    while (true) {
       if (Date.now() > deadline) throw new Error(`/knowledge never answered:\n${this.screen()}`);
+      if (isRunning()) quietSince = 0;
+      else if (!quietSince) quietSince = Date.now();
+      else if (Date.now() - quietSince >= 800) break;
       await sleep(100);
     }
-    await sleep(300);
   }
-
   /**
    * A mouse click (left button, SGR encoding) on the first cell showing `label`, searched from
    * `from` columns on (the docked pane sits right of the conversation). Clicked again when

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { createHash } from 'crypto';
@@ -10,11 +11,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCRIPT_PATH = join(__dirname, '..', 'scripts', 'tree-sitter-extract.mjs');
 
-const TMP_DIR = join(__dirname, '__tmp_extract_test__');
+// A folder of this run's own: a second test run in the same checkout must not wipe it.
+const TMP_DIR = mkdtempSync(join(tmpdir(), 'ak-extract-'));
+
+/**
+ * Each test spawns the extractor once and waits for it to exit: a cold node start that loads
+ * the tree-sitter grammars takes seconds on a busy machine. The spawn has this budget, and each
+ * test the same plus a margin, so neither is cut short by the default 10 s.
+ */
+const SPAWN_MS = 60_000;
 
 function runExtract(path: string, args: string[] = []): unknown {
   const cmd = `node "${SCRIPT_PATH}" "${path}" ${args.join(' ')}`;
-  const out = execSync(cmd, { encoding: 'utf-8', timeout: 30_000 });
+  const out = execSync(cmd, { encoding: 'utf-8', timeout: SPAWN_MS });
   return JSON.parse(out);
 }
 
@@ -30,7 +39,7 @@ afterEach(() => {
   if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true, force: true });
 });
 
-describe('tree-sitter-extract', () => {
+describe('tree-sitter-extract', { timeout: SPAWN_MS + 5_000 }, () => {
   it('produces valid output schema', () => {
     const tsContent = 'export function hello(name: string): string { return name; }\n';
     writeFileSync(join(TMP_DIR, 'index.ts'), tsContent);

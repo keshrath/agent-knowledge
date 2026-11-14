@@ -114,6 +114,15 @@ function loadIdentity(memoryDir: string): string {
   return DEFAULT_IDENTITY;
 }
 
+/**
+ * Whether the person has said who they are: `configured` (identity.md), `declined`
+ * (.identity-declined, they said not now) or `pending` (to be asked).
+ */
+export function identityState(memoryDir: string): 'configured' | 'declined' | 'pending' {
+  if (loadIdentity(memoryDir) !== DEFAULT_IDENTITY) return 'configured';
+  return fs.existsSync(path.join(memoryDir, '.identity-declined')) ? 'declined' : 'pending';
+}
+
 // ── Weighted scoring (v1.8.0 L1 logic) ──────────────────────────────────────
 
 interface ScoredEntry {
@@ -318,7 +327,7 @@ function renderLastSessionSummary(_ctx: SectionContext): RawRender {
   if (typeof latest.messageCount === 'number') {
     lines.push(`- **Messages:** ${latest.messageCount}`);
   }
-  if (latest.preview && latest.preview !== 'N/A') {
+  if (latest.preview) {
     lines.push(`- **Preview:** ${shortExcerpt(latest.preview, SECTION_EXCERPT_CHARS)}`);
   }
   const joined = lines.join('\n');

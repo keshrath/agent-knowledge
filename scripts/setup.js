@@ -10,11 +10,15 @@
 //
 // What it does:
 // - Builds the project if dist/ is missing
-// - Registers the MCP server in the agent's config
-// - Adds lifecycle hooks for Claude Code (SessionStart banner, PreCompact
-//   flush + distill, SessionEnd distill)
-// - Registers the opencode plugin ("agent-knowledge/opencode") in opencode.json
-// - Adds permission for mcp__agent-knowledge__* tools
+// - Claude Code: says how to install the plugin (it runs the MCP server, the
+//   knowledge-ingest skill and the mod with the /knowledge pane and the session
+//   lifecycle), adds permission for mcp__agent-knowledge__* tools, and removes the
+//   command hooks agent-knowledge 2.x installed (the mod replaces them)
+// - OpenCode: registers the MCP server and the opencode plugin
+//   ("agent-knowledge/opencode") in opencode.json
+// - Any other client: prints the MCP config to add
+// - Installs the knowledge-ingest skill to ~/.agents/skills (OpenCode, Cursor, Codex CLI,
+//   Gemini CLI)
 //
 // Usage: node scripts/setup.js [--host=claude|opencode|all|auto]
 //        node scripts/setup.js [--agent claude|generic]   # deprecated alias
@@ -86,22 +90,8 @@ if (!existsSync(join(PROJECT_DIR, 'dist', 'index.js'))) {
 
 const distPath = join(PROJECT_DIR, 'dist', 'index.js');
 
-console.log('Registering MCP server...');
-if (IS_CLAUDE && existsSync(CLAUDE_JSON)) {
-  const config = JSON.parse(readFileSync(CLAUDE_JSON, 'utf-8'));
-  if (!config.mcpServers) config.mcpServers = {};
-
-  config.mcpServers['agent-knowledge'] = {
-    type: 'stdio',
-    command: 'node',
-    args: [distPath],
-    env: {},
-  };
-
-  writeFileSync(CLAUDE_JSON, JSON.stringify(config, null, 2));
-  console.log(`  Added agent-knowledge MCP server → ${distPath}`);
-} else if (!IS_OPENCODE) {
-  console.log('  Add this to your MCP client config:');
+if (!IS_CLAUDE && !IS_OPENCODE) {
+  console.log('Add this to your MCP client config:');
   console.log('  {');
   console.log('    "mcpServers": {');
   console.log('      "agent-knowledge": {');
@@ -175,6 +165,22 @@ if (IS_OPENCODE) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// knowledge-ingest skill for every host reading ~/.agents/skills (OpenCode, Cursor,
+// Codex CLI, Gemini CLI). Claude Code gets it from the plugin.
+// ---------------------------------------------------------------------------
+
+const skillSrc = join(PROJECT_DIR, 'plugin', 'skills', 'knowledge-ingest', 'SKILL.md');
+const skillDest = join(HOME, '.agents', 'skills', 'knowledge-ingest', 'SKILL.md');
+if (existsSync(skillSrc)) {
+  if (!existsSync(skillDest) || statSync(skillDest).mtimeMs < statSync(skillSrc).mtimeMs) {
+    mkdirSync(dirname(skillDest), { recursive: true });
+    cpSync(skillSrc, skillDest);
+    console.log(`
+Installed the knowledge-ingest skill → ${skillDest}`);
+  }
+}
+
 if (!IS_CLAUDE) {
   console.log(`
 Setup complete!
@@ -189,141 +195,68 @@ ${
   process.exit(0);
 }
 
-console.log('Configuring Claude Code hooks...');
-if (!existsSync(SETTINGS_JSON)) {
-  console.log('  Warning: settings.json not found. Configure hooks manually.');
-  process.exit(0);
-}
+console.log('Configuring Claude Code...');
+if (existsSync(SETTINGS_JSON)) {
+  const settings = JSON.parse(readFileSync(SETTINGS_JSON, 'utf-8'));
 
-const settings = JSON.parse(readFileSync(SETTINGS_JSON, 'utf-8'));
-
-if (!settings.permissions) settings.permissions = {};
-if (!settings.permissions.allow) settings.permissions.allow = [];
-if (!settings.permissions.allow.includes('mcp__agent-knowledge__*')) {
-  settings.permissions.allow.push('mcp__agent-knowledge__*');
-  console.log('  Added mcp__agent-knowledge__* permission');
-}
-
-if (!settings.hooks) settings.hooks = {};
-
-const hookDir = join(PROJECT_DIR, 'scripts', 'hooks');
-
-function addUnmatchedHook(eventName, marker, command, timeout = 10) {
-  if (!settings.hooks[eventName]) settings.hooks[eventName] = [];
-  const groups = settings.hooks[eventName];
-  const existing = groups.find(
-    (g) => g.hooks && g.hooks.some((h) => h.command && h.command.includes(marker)),
-  );
-  if (existing) {
-    console.log(`  ${eventName} (${marker}): already configured`);
-    return;
+  if (!settings.permissions) settings.permissions = {};
+  if (!settings.permissions.allow) settings.permissions.allow = [];
+  if (!settings.permissions.allow.includes('mcp__agent-knowledge__*')) {
+    settings.permissions.allow.push('mcp__agent-knowledge__*');
+    console.log('  Added mcp__agent-knowledge__* permission');
   }
-  if (groups.length > 0 && groups[0].hooks && !groups[0].matcher) {
-    groups[0].hooks.push({ type: 'command', command, timeout });
-  } else {
-    groups.push({ hooks: [{ type: 'command', command, timeout }] });
-  }
-  console.log(`  ${eventName}: added ${marker} hook`);
-}
 
-// SessionStart: /knowledge banner + L0 identity
-addUnmatchedHook(
-  'SessionStart',
-  'session-start.js',
-  `node "${join(hookDir, 'session-start.js')}"`,
-  5,
-);
-
-// SessionStart: knowledge-ingest freshness check
-addUnmatchedHook(
-  'SessionStart',
-  'session-start-ingest.mjs',
-  `node "${join(hookDir, 'session-start-ingest.mjs')}"`,
-  10,
-);
-
-// UserPromptSubmit: targeted knowledge injection on the session's first real prompt
-addUnmatchedHook(
-  'UserPromptSubmit',
-  'first-prompt-inject.mjs',
-  `node "${join(hookDir, 'first-prompt-inject.mjs')}"`,
-  10,
-);
-
-// PreCompact: rich summary (library) + simple text distill (heuristic)
-addUnmatchedHook(
-  'PreCompact',
-  'precompact-flush.mjs',
-  `node "${join(hookDir, 'precompact-flush.mjs')}"`,
-  10,
-);
-addUnmatchedHook(
-  'PreCompact',
-  'precompact-distill.mjs',
-  `node "${join(hookDir, 'precompact-distill.mjs')}"`,
-  10,
-);
-
-// SessionEnd: simple text distill for cross-machine memory
-addUnmatchedHook(
-  'SessionEnd',
-  'sessionend-distill.mjs',
-  `node "${join(hookDir, 'sessionend-distill.mjs')}"`,
-  10,
-);
-
-writeFileSync(SETTINGS_JSON, JSON.stringify(settings, null, 2));
-console.log('  Saved settings.json');
-
-// ---------------------------------------------------------------------------
-// Install knowledge-ingest skill
-// ---------------------------------------------------------------------------
-
-console.log('Installing knowledge-ingest skill...');
-
-const skillSrc = join(PROJECT_DIR, 'plugin', 'skills', 'knowledge-ingest', 'SKILL.md');
-
-const skillDests = [
-  join(HOME, '.claude', 'skills', 'knowledge-ingest', 'SKILL.md'),
-  join(HOME, '.agents', 'skills', 'knowledge-ingest', 'SKILL.md'),
-];
-
-if (existsSync(skillSrc)) {
-  const srcMtime = statSync(skillSrc).mtimeMs;
-  for (const dest of skillDests) {
-    mkdirSync(dirname(dest), { recursive: true });
-    let shouldCopy = true;
-    if (existsSync(dest)) {
-      if (statSync(dest).mtimeMs >= srcMtime) {
-        shouldCopy = false;
-      }
+  // The command hooks 2.x installed: the plugin's mod does their work now, and their
+  // scripts are gone, so each would fail at every session.
+  const OLD_HOOKS = [
+    'session-start.js',
+    'session-start-ingest.mjs',
+    'first-prompt-inject.mjs',
+    'precompact-flush.mjs',
+    'precompact-distill.mjs',
+    'sessionend-distill.mjs',
+  ];
+  const isOld = (h) =>
+    typeof h.command === 'string' &&
+    h.command.includes('agent-knowledge') &&
+    OLD_HOOKS.some((name) => h.command.includes(name));
+  for (const [event, groups] of Object.entries(settings.hooks ?? {})) {
+    for (const group of groups) {
+      const before = group.hooks?.length ?? 0;
+      group.hooks = (group.hooks ?? []).filter((h) => !isOld(h));
+      if (group.hooks.length < before)
+        console.log(
+          `  ${event}: removed ${before - group.hooks.length} agent-knowledge 2.x hook(s)`,
+        );
     }
-    if (shouldCopy) {
-      cpSync(skillSrc, dest);
-      console.log(`  Installed → ${dest}`);
-    } else {
-      console.log(`  Up to date → ${dest}`);
-    }
+    settings.hooks[event] = groups.filter((g) => g.hooks.length > 0);
+    if (settings.hooks[event].length === 0) delete settings.hooks[event];
   }
-} else {
-  console.log('  Warning: plugin/skills/knowledge-ingest/SKILL.md not found in repo');
+
+  writeFileSync(SETTINGS_JSON, JSON.stringify(settings, null, 2));
+  console.log('  Saved settings.json');
 }
+
+const config = existsSync(CLAUDE_JSON) ? JSON.parse(readFileSync(CLAUDE_JSON, 'utf-8')) : {};
+const handWritten = config.mcpServers?.['agent-knowledge'];
 
 console.log(`
 Setup complete!
 
-Restart Claude Code to load the new MCP server. Every session will now:
-  - Name the /knowledge pane and load the L0 identity on start (session-start.js)
-  - Report ingest freshness on start (session-start-ingest.mjs)
-  - Inject query-targeted knowledge hits on the first real user prompt (first-prompt-inject.mjs)
-  - Flush a rich session summary before compaction (precompact-flush.mjs)
-  - Snapshot recent user prompts before compaction (precompact-distill.mjs)
-  - Dump a final session summary on exit (sessionend-distill.mjs)
-
-Browse it: /knowledge in Claude Code, with the plugin installed:
+Install the plugin in Claude Code:
   claude plugin marketplace add keshrath/agent-knowledge
   claude plugin install agent-knowledge@agent-knowledge
-Knowledge base: ~/agent-knowledge/ (configurable via AGENT_KNOWLEDGE_MEMORY_DIR)
 
-See docs/HOOKS.md for details and docs/SETUP.md for manual configuration.
+It runs the MCP server, adds the knowledge-ingest skill and a mod that
+  - names the knowledge base, who you are and the project's ingest state in each conversation
+  - adds the matching entries to the first real prompt
+  - snapshots the session into the knowledge base when it is compacted and when it ends
+  - opens the knowledge base beside the conversation: /knowledge
+${
+  handWritten
+    ? `\nRemove the hand-written "agent-knowledge" entry from ${CLAUDE_JSON} once the plugin is in,\nso the tools do not appear twice.\n`
+    : ''
+}
+Knowledge base: ~/agent-knowledge/ (configurable via AGENT_KNOWLEDGE_MEMORY_DIR)
+See docs/HOOKS.md for the lifecycle and docs/SETUP.md for other clients.
 `);

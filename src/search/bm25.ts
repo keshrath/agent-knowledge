@@ -122,7 +122,8 @@ const STOPWORDS = new Set([
   'am',
 ]);
 
-function tokenize(text: string): string[] {
+/** The words of `text` the index ranks on: lowercase, stopwords left out. */
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9]+/)
@@ -154,22 +155,7 @@ export class BM25Index {
   }
 
   addDocument(id: string, text: string): void {
-    if (this.docs.has(id)) {
-      const existing = this.docs.get(id)!;
-      for (const term of existing.termFreqs.keys()) {
-        const count = this.docFreq.get(term) ?? 0;
-        if (count <= 1) {
-          this.docFreq.delete(term);
-          this.invertedIndex.delete(term);
-        } else {
-          this.docFreq.set(term, count - 1);
-          this.invertedIndex.get(term)?.delete(id);
-        }
-      }
-      this.totalDocs--;
-      this.totalLength -= existing.length;
-    }
-
+    this.removeDocument(id);
     const tokens = tokenize(text);
     const termFreqs = new Map<string, number>();
     for (const token of tokens) {
@@ -188,6 +174,35 @@ export class BM25Index {
 
     this.totalDocs++;
     this.totalLength += tokens.length;
+  }
+
+  /** Takes a document out of the index; nothing when it is not in it. */
+  removeDocument(id: string): void {
+    const existing = this.docs.get(id);
+    if (!existing) return;
+    for (const term of existing.termFreqs.keys()) {
+      const count = this.docFreq.get(term) ?? 0;
+      if (count <= 1) {
+        this.docFreq.delete(term);
+        this.invertedIndex.delete(term);
+      } else {
+        this.docFreq.set(term, count - 1);
+        this.invertedIndex.get(term)?.delete(id);
+      }
+    }
+    this.docs.delete(id);
+    this.totalDocs--;
+    this.totalLength -= existing.length;
+  }
+
+  /** BM25 IDF (Robertson-Sparck-Jones, with +1 to avoid negatives) of a term in `df` documents. */
+  private idf(df: number): number {
+    return Math.log(1 + (this.totalDocs - df + 0.5) / (df + 0.5));
+  }
+
+  /** Whether the document holds the term. */
+  has(id: string, term: string): boolean {
+    return this.docs.get(id)?.termFreqs.has(term) ?? false;
   }
 
   search(query: string, maxResults?: number): Array<{ id: string; score: number }> {
@@ -209,9 +224,7 @@ export class BM25Index {
       for (const term of queryTokens) {
         const tf = doc.termFreqs.get(term) ?? 0;
         if (tf === 0) continue;
-        const df = this.docFreq.get(term) ?? 0;
-        // BM25 IDF (Robertson-Sparck-Jones, with +1 to avoid negatives)
-        const idf = Math.log(1 + (this.totalDocs - df + 0.5) / (df + 0.5));
+        const idf = this.idf(this.docFreq.get(term) ?? 0);
         const denom = tf + this.k1 * (1 - this.b + this.b * (doc.length / avgdl));
         score += idf * ((tf * (this.k1 + 1)) / denom);
       }

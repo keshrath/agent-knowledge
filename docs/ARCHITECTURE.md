@@ -32,7 +32,7 @@ graph TB
     Rest --> Guard[transport/guard.ts]
     Guard --> Routes[transport/rest.ts]
     Routes --> Pane["/knowledge pane (plugin/)"]
-    Routes --> Hooks[hooks, opencode plugin, agent-tasks]
+    Routes --> Hooks[the mod's lifecycle, opencode plugin, agent-tasks]
 ```
 
 ## File Structure
@@ -82,15 +82,12 @@ src/
   vectorstore/          sqlite-vec wrapper + chunker
   embeddings/           Pluggable embedding providers (openai / claude / gemini / local)
 
-plugin/                 Claude Code plugin — .mcp.json, skills/knowledge-ingest, the /knowledge pane mod (hooks/)
+plugin/                 Claude Code plugin — .mcp.json, skills/knowledge-ingest, one mod (hooks/):
+                        the /knowledge pane and the session lifecycle (docs/HOOKS.md)
 
 scripts/
-  hooks/
-    session-start.js         SessionStart — names the /knowledge pane + L0 identity injection
-    first-prompt-inject.mjs  UserPromptSubmit — v1.8 query-targeted knowledge inject on the first real prompt
-    precompact-flush.mjs     PreCompact — disk dump + save-unsaved-context nudge
-    precompact-distill.mjs   PreCompact — lightweight user-prompt snapshot
-    sessionend-distill.mjs   SessionEnd — final summary breadcrumb
+  setup.js              Host setup (OpenCode config, the ~/.agents skill, 2.x hook cleanup)
+  plugins/opencode/     The opencode plugin
 
 bench/
   run.ts                R@5 / R@10 + diversity@5 smoke bench over local ~/agent-knowledge/
@@ -417,7 +414,7 @@ One process serves the REST API: the first MCP process to bind `127.0.0.1:AGENT_
 
 - **Guard** (`transport/guard.ts`, every request): `Host` must be a loopback name with the port (defeats DNS rebinding), any `Origin` is refused (no browser is a caller), a body on POST/PUT/PATCH/DELETE must be `application/json`. No CORS headers.
 - **Routes** (`transport/rest.ts`): health, overview, entry list/read/links/delete/write/sync, search, analysis, sessions list/search/summary, events. `POST /api/knowledge` runs the full write pipeline (git pull, write, embed, auto-link, git push).
-- **No rate limiter**: every caller shares the loopback address, so one bucket would throttle every pane and hook at once; any local process can read the files anyway.
+- **No rate limiter**: every caller shares the loopback address, so one bucket would throttle every pane and session at once; any local process can read the files anyway.
 
 ## Caching Strategy
 

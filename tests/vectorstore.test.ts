@@ -219,4 +219,25 @@ describe('VectorStore', () => {
       expect(results).toEqual([]);
     });
   });
+
+  it('knowledgeVectors: every knowledge chunk by entry, again only once they changed', () => {
+    store.setProvider('test-provider', 4);
+    store.upsert([
+      makeEntry({ id: 'a0', sourceId: 'notes/a.md', chunkIndex: 0, embedding: [1, 0, 0, 0] }),
+      makeEntry({ id: 'a1', sourceId: 'notes/a.md', chunkIndex: 1, embedding: [0, 1, 0, 0] }),
+      makeEntry({ id: 'b0', sourceId: 'notes/b.md', embedding: [0, 0, 1, 0] }),
+      makeEntry({ id: 's0', source: 'session', sourceId: 'sess-1', embedding: [0, 0, 0, 1] }),
+    ]);
+    const first = store.knowledgeVectors('test-provider', 4)!;
+    expect([...first.vectors.keys()].sort()).toEqual(['notes/a.md', 'notes/b.md']);
+    expect(first.vectors.get('notes/a.md')!.map((v) => [...v])).toEqual([
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+    ]);
+    expect(store.knowledgeVectors('test-provider', 4, first.stamp)).toBeNull();
+    expect(store.knowledgeVectors('another-provider', 4)!.vectors.size).toBe(0);
+    store.upsert([makeEntry({ id: 'b0', sourceId: 'notes/b.md', embedding: [0, 0, 0.5, 0.5] })]);
+    const next = store.knowledgeVectors('test-provider', 4, first.stamp)!;
+    expect([...next.vectors.get('notes/b.md')![0]!]).toEqual([0, 0, 0.5, 0.5]);
+  });
 });

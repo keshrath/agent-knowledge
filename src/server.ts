@@ -1,8 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ensureRepo } from './knowledge/git.js';
 import { RELATIONSHIP_TYPES } from './knowledge/graph.js';
-import { getConfig } from './types.js';
 import { getVersion } from './version.js';
 import { toolHandlers, validateArgs, err, SCOPES } from './tool-handlers.js';
 import { CATEGORIES } from './knowledge/store.js';
@@ -459,10 +457,6 @@ export function createServer(): Server {
       return err(`Error in ${name}: ${message}`);
     }
   });
-
-  const startupConfig = getConfig();
-  const repoResult = ensureRepo(startupConfig.memoryDir, startupConfig.gitUrl);
-  console.error(`[knowledge] Repo init: ${repoResult.message}`);
 
   return server;
 }

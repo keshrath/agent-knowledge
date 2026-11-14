@@ -1,248 +1,149 @@
-# Hooks (Claude Code)
+# The session lifecycle (Claude Code)
 
-agent-knowledge ships six hook scripts that integrate with Claude Code's
-lifecycle events. They live under `scripts/hooks/` and are installed by
-`scripts/setup.js` into `~/.claude/settings.json`.
+In Claude Code the agent-knowledge plugin's mod (`plugin/hooks/register.tsx`,
+Claude Code 2.1.289+) ties the knowledge base into each session. There are no
+command hooks to install and nothing to add to `settings.json`: install the
+plugin and the lifecycle comes with it.
 
-All hooks fail open — any internal error is logged to stderr and the hook
-returns an empty JSON object so the user is never blocked.
+```
+claude plugin marketplace add keshrath/agent-knowledge
+claude plugin install agent-knowledge@agent-knowledge
+```
 
-| Script                     | Event            | Purpose                                                                  |
-| -------------------------- | ---------------- | ------------------------------------------------------------------------ |
-| `session-start.js`         | SessionStart     | Names the `/knowledge` pane + auto-loads the L0 identity into context    |
-| `session-start-ingest.mjs` | SessionStart     | Detects project + reports knowledge-ingest cache drift via SHA256 diff   |
-| `first-prompt-inject.mjs`  | UserPromptSubmit | Injects query-targeted knowledge hits on the session's first real prompt |
-| `precompact-flush.mjs`     | PreCompact       | Rich session summary on disk + save-unsaved-context nudge into context   |
-| `precompact-distill.mjs`   | PreCompact       | Lightweight text snapshot of recent user prompts                         |
-| `sessionend-distill.mjs`   | SessionEnd       | Final summary (turn counts, tool uses, first 20 prompts)                 |
+Every part goes through the local REST server (`127.0.0.1:3423`, see the
+README) and fails open: a server that is down or slow, or an error anywhere,
+leaves the session exactly as it would be without the plugin. No part waits
+more than 2 s for the server (a snapshot 10 s): a process that holds the port
+and never answers costs a prompt at most that, and the holder itself lets the
+port go after two unanswered self-checks, 30 s apart.
 
-## session-start.js
+| When                             | What the mod does                                                                 | REST it calls                                     |
+| -------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------- |
+| The conversation's first message | One context block: what the knowledge base holds, who the person is, ingest state | `GET /api/overview`, `/api/wakeup`, `/api/ingest` |
+| The first real prompt            | The entries matching it ride beside it, once per conversation                     | `GET /api/knowledge/search?mmr=true`              |
+| A compaction of the main thread  | Snapshot of the session; the summary keeps what is still to be saved              | `POST /api/sessions/:id/snapshot` (`compact`)     |
+| The session ending (or `/clear`) | The session's last snapshot                                                       | `POST /api/sessions/:id/snapshot` (`end`)         |
 
-Four jobs:
+## The context block (`prompt.context`)
 
-1. Says where the person browses the knowledge base (the `/knowledge` pane of
-   the agent-knowledge plugin), in the `systemMessage` and in SessionStart
-   `additionalContext`.
-2. Auto-loads the **L0 identity** section (who the user is — query-agnostic
-   facts from `~/agent-knowledge/identity.md`) into the same
-   `additionalContext`, so every session starts with that context without a
-   manual `knowledge(action="wakeup")` call.
-3. Clears the `first-prompt-inject.mjs` marker file for this `session_id` on
-   every SessionStart event (startup / resume / clear). Resumed sessions
-   reuse the same `session_id`, so without this the inject hook silently
-   skips on the next prompt because the prior run's marker is still on disk.
-4. **Identity onboarding**: if neither `identity.md` nor `IDENTITY.md` exists
-   in the memory dir AND there is no `.identity-declined` opt-out marker,
-   appends a short instruction to `additionalContext` telling the agent to
-   ask the user three questions (name/role, stack, projects) and save the
-   answers via the host's `Write` tool. The agent drives the conversation;
-   the user never has to manually create the file. If the user says "skip"
-   or "not now", the agent creates `~/agent-knowledge/.identity-declined` and
-   the onboarding prompt stops firing. Delete that file to re-enable.
+The model's first message carries one block named `agent-knowledge`. It is
+computed again after a compaction and after `/clear`.
 
-L1 top-weighted facts are **not** auto-loaded here. The companion
-`first-prompt-inject.mjs` runs a query-targeted KB search on the session's
-first real prompt and injects a better-matched slice than any
-query-agnostic pre-load would. Users who want the full legacy L0+L1 pack can
-still call `knowledge(action="wakeup")` manually, or flip
-`AGENT_KNOWLEDGE_WAKEUP_BUDGET` up to re-enable larger identity sections.
+1. **What the knowledge base holds**: entry and session counts by category,
+   and how to reach it (`knowledge_search`, `knowledge` action `read`,
+   `/knowledge` for the person).
+2. **Who the person is** (the L0 identity): the identity section of the
+   wakeup bundle, from `identity.md` in the knowledge base, headed
+   `--- Knowledge wakeup (identity only; call `knowledge action=wakeup` for L1 facts) ---`.
+3. **Identity onboarding**: while there is neither `identity.md` nor a
+   `.identity-declined` marker, the block asks the model to ask the person three
+   questions (name and role, stack, projects) and save the answers to
+   `identity.md` with the Write tool, or to create `.identity-declined` when
+   they say not now. Delete that file to be asked again.
+4. **Ingest freshness** of the session's folder (the knowledge-ingest skill's
+   `.knowledge-ingest-cache.json`, compared by SHA-256): a folder with three or
+   more source files that was never ingested is offered `/knowledge-ingest`;
+   one with files changed, new or deleted since says how many. A current
+   ingest, or a folder with fewer source files, adds nothing. Hashing only,
+   no tokens.
 
-Also emits a user-visible `systemMessage` on every session start with a
-status suffix so the user can always tell the hook ran:
-
-- `agent-knowledge: /knowledge | identity: 312 chars` — when a
-  user-authored `identity.md` was loaded.
-- `agent-knowledge: /knowledge | identity: onboarding pending` —
-  when no identity file exists and onboarding is queued (agent will ask
-  the user on the next prompt).
-- `agent-knowledge: /knowledge | identity: declined (delete ~/agent-knowledge/.identity-declined to redo)` —
-  when the user previously opted out.
-- `agent-knowledge: /knowledge | identity: placeholder (no identity.md) · inject rearmed` —
-  fallback for edge cases (e.g. stat errors), with `· inject rearmed` when
-  the first-prompt-inject marker was cleared.
-- `agent-knowledge: /knowledge | autowake off · resume` — when
-  `AGENT_KNOWLEDGE_AUTOWAKE=0` disables auto-injection.
-
-The model-facing context and the user-facing line are separate channels —
-the `systemMessage` is purely a UX signal so the user can see what got
-pre-loaded and whether the next prompt will trigger query-targeted injection.
-
-### Environment variables
+L1 facts are not loaded here: the first-prompt injection brings the entries
+that match what is asked, which a query-agnostic pack cannot.
 
 | Variable                        | Default | Description                                             |
 | ------------------------------- | ------- | ------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_AUTOWAKE`      | `1`     | Set `0` / `false` to skip the identity auto-injection   |
-| `AGENT_KNOWLEDGE_WAKEUP_BUDGET` | `200`   | Max tokens (chars/4 estimate) for the L0 identity slice |
+| `AGENT_KNOWLEDGE_AUTOWAKE`      | `1`     | `0` / `false` / `off`: no identity and no onboarding    |
+| `AGENT_KNOWLEDGE_WAKEUP_BUDGET` | `200`   | Tokens (chars/4) for the identity section, `[50, 4000]` |
 
-Requires `npm run build` to have succeeded — if `dist/wakeup.js` is missing,
-only the `/knowledge` line is emitted (fail-open).
+## The first real prompt (`prompt.submit`)
 
-## session-start-ingest.mjs
+The conversation's first real prompt is searched against the knowledge base
+(MMR re-ranked, so the hits are not five copies of one thing) and the top hits
+ride beside it, where the model reads them and the person does not:
 
-Second SessionStart hook, paired with `session-start.js`. On session start:
+```
+## Knowledge — top hits for your first prompt
 
-1. Detects the current project from `cwd`.
-2. Checks whether a `knowledge-ingest` cache exists for it.
-3. If no cache → suggests bootstrapping (the `/knowledge-ingest` skill).
-4. If cache exists → computes a quick SHA256 diff of the current files vs the cached snapshot and reports how many files changed since last ingest.
+_Injected automatically by agent-knowledge. Query these entries with `knowledge` (action=read, path=…) before deciding whether to issue a wider `knowledge_search`._
 
-Zero LLM tokens, reads/hashes only. Fail-open: all errors logged to stderr,
-always outputs valid JSON.
-
-## first-prompt-inject.mjs
-
-Fires on UserPromptSubmit. When the session's FIRST real user prompt arrives,
-runs it through `searchKnowledge(prompt, { mmr: true })` and injects the top-K
-hits into `additionalContext` before the model reads the prompt. Complements
-the wakeup pack (which is query-agnostic) with query-targeted context.
-
-Gates (all must pass to fire):
-
-- Prompt length ≥ 10 characters.
-- Prompt does NOT start with `/` (slash command) or `!` (bash shortcut).
-- No marker file exists yet for this session ID.
-
-The marker file (`{dataDir}/.first-prompt-seen/<session_id>`) is only written
-AFTER a real search has run — skip-gates like `/clear` do NOT burn the shot,
-so the user's next real question still gets injection.
-
-When injection fires, the hook also emits a user-visible `systemMessage`:
-`knowledge: injected 4 hits (decisions/database-choice.md, sessions/foo.md, +2 more)`.
-This is separate from the model-facing `additionalContext` — the user sees a
-one-line summary in the transcript, the model sees the full rendered hit list.
-
-### Environment variables
-
-| Variable                               | Default             | Description                                             |
-| -------------------------------------- | ------------------- | ------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`                 | Set `0` / `false` / `off` to disable                    |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`               | Max tokens (chars/4 estimate), clamped to `[100, 8000]` |
-| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `4`                 | Max rendered entries, clamped to `[1, 20]`              |
-| `AGENT_KNOWLEDGE_MEMORY_DIR`           | `~/agent-knowledge` | Knowledge base to search                                |
-
-## precompact-flush.mjs
-
-Called right before the host compacts the transcript. Two jobs:
-
-1. Imports `dist/sessions/summary.js` from the built library, pulls a rich
-   session summary via `getSessionSummary(sessionId)`, and writes it to
-   `~/agent-knowledge/sessions/<project-slug>/precompact-<timestamp>-<id>.md`.
-   If `dist/` is missing, the disk dump is skipped (fail-open).
-2. Injects a short "save-unsaved-context" nudge into the PreCompact
-   `additionalContext` so the agent is prompted to write anything important
-   to the knowledge base BEFORE compaction summarises the transcript away.
-
-### Environment variables
-
-| Variable                           | Default             | Description                                                                                          |
-| ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------- |
-| `AGENT_KNOWLEDGE_MEMORY_DIR`       | `~/agent-knowledge` | Where rich summaries are written                                                                     |
-| `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE` | `1`                 | Set `0` / `false` to disable the nudge only. Set `off` to suppress both the nudge AND the disk dump. |
-
-## precompact-distill.mjs
-
-A simpler heuristic companion to `precompact-flush.mjs`. Reads the last
-~200 KB of the transcript JSONL, extracts the last 10 user prompts, and
-writes them to
-`~/agent-knowledge/projects/precompact-<slug>-<session>.md`. This one does
-not require the library to be built, so it still works when `dist/` is
-missing. Running both is fine — they target different files.
-
-### Environment variables
-
-| Variable                     | Default             | Description                                       |
-| ---------------------------- | ------------------- | ------------------------------------------------- |
-| `AGENT_KNOWLEDGE_MEMORY_DIR` | `~/agent-knowledge` | Where the snapshot is written (`<dir>/projects/`) |
-
-## sessionend-distill.mjs
-
-On `SessionEnd`, walks the whole transcript JSONL, counts user / assistant
-turns and `tool_use` blocks, collects the first 20 user prompts, and writes
-a markdown summary to
-`~/agent-knowledge/projects/session-<slug>-<session>.md`. Gives
-agent-knowledge a breadcrumb for later session search/recall.
-
-Also emits a user-visible `systemMessage` on stdout so you can tell the
-hook actually ran — receipt of the turn / tool-use counts and the target
-file path, or the reason for skipping (missing transcript, write failure).
-A one-line breadcrumb is appended to
-`~/agent-knowledge/sessions/index.md` on every successful distill, so
-the receipt is durable even when the host tears the transcript down
-before painting the message.
-
-On a successful distill the hook also POSTs the receipt to the REST
-server's `POST /api/events` (port from `AGENT_KNOWLEDGE_PORT`, default
-3423), where the `/knowledge` pane picks it up — covers hosts (like Claude
-Code `/exit`) that swallow `systemMessage` on SessionEnd. Fails open on
-ECONNREFUSED / timeout; set `AGENT_KNOWLEDGE_EVENTS=0` to suppress the POST
-entirely.
-
-## Manual configuration
-
-`scripts/setup.js` writes the hooks into `~/.claude/settings.json`
-automatically. If you need to configure them by hand, add entries like:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/abs/path/to/agent-knowledge/scripts/hooks/session-start.js\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/abs/path/to/agent-knowledge/scripts/hooks/first-prompt-inject.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/abs/path/to/agent-knowledge/scripts/hooks/precompact-flush.mjs\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node \"/abs/path/to/agent-knowledge/scripts/hooks/precompact-distill.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"/abs/path/to/agent-knowledge/scripts/hooks/sessionend-distill.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
+- **Release ritual** (`workflows/release.md`, score 3.42) — Bump, tag, push…
 ```
 
-Replace `/abs/path/to/agent-knowledge` with your clone path.
+Under the prompt the transcript shows one line naming them by title, e.g.
+`agent-knowledge: 2 entries for this prompt: Release ritual, Tag before you push`.
 
-## Testing the hooks
+- A prompt shorter than 10 characters, a slash command, a `!` shell line, a
+  background task's notice or another session's message is not searched and
+  leaves the injection for the next prompt.
+- The first search the server answers spends it, hits or none. A server that
+  is down leaves it for the next prompt.
+- Once per conversation: again after `/clear` (a new conversation) and in a
+  restarted or resumed session.
 
-`tests/hooks/hooks.test.ts` covers the six scripts with shape-correct
-fail-open assertions plus a positive-path render test for
-`first-prompt-inject.mjs`. Run `npm test -- tests/hooks/` to execute them
-in isolation.
+| Variable                               | Default | Description                                  |
+| -------------------------------------- | ------- | -------------------------------------------- |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_INJECT`   | `1`     | `0` / `false` / `off` to turn it off         |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_BUDGET`   | `600`   | Tokens (chars/4) for the hits, `[100, 8000]` |
+| `AGENT_KNOWLEDGE_FIRSTPROMPT_MAX_HITS` | `2`     | Entries at most, `[1, 2]`                    |
+
+## The session snapshot (`session.compact`, `session.end`)
+
+When the main conversation is compacted (`/compact`, or at the threshold) and
+when the session ends (exit, `/clear`, resume elsewhere), the server writes
+the session's gist into the knowledge base:
+
+`sessions/<project>/<YYYY-MM-DD>-<session id, 8 chars>.md`
+
+One file per session, rewritten at each compaction and at the end, titled by
+the project, the day and the first thing asked (`demo · 2026-11-13 · fix the
+sync`), with the session id, folder, branch (none outside git) and times in
+its frontmatter, and sections **What was asked** (the first and last ten
+prompts), **Tools used**, **Files** (the ones an editing or writing tool call
+changed), **Commits** (the ones `git commit` reported) and **Errors**. In the
+`/knowledge` pane they are the `sessions` category, left out of `all`. It is built by the session parser
+(every host the adapters read), with secrets, e-mail addresses and system
+noise (reminders, task notifications, command wrappers) scrubbed as the
+distiller scrubs them. A session where nothing was asked writes nothing. The
+file is searchable at once and reaches other machines with the next git sync.
+
+After a compaction a toast names the snapshot (`Session saved at compaction: demo · 2026-11-13 ·
+fix the sync`): a transcript line would land in the middle of the turn. After `/clear` the new
+conversation's first line names it (`Session saved: …`): a toast is drawn neither in the
+conversation ending nor on the screen `/clear` just emptied. Every other open session toasts it
+as a live event.
+
+At a compaction the summary is also asked to keep, under **Knowledge to
+save**, each durable fact not yet written to the knowledge base (decisions,
+gotchas, hard-won commands, people and ownership, project state), so the model
+can still save them with `knowledge` (action `write`) afterwards.
+
+| Variable                           | Default | Description                                                                          |
+| ---------------------------------- | ------- | ------------------------------------------------------------------------------------ |
+| `AGENT_KNOWLEDGE_PRECOMPACT_NUDGE` | `1`     | `0` / `false`: the summary is left as asked. `off`: no snapshot at compaction either |
+
+Subagents' compactions are left alone.
+
+## From 2.x command hooks
+
+agent-knowledge 2.x installed six command hooks (`scripts/hooks/*.js|mjs`)
+into `~/.claude/settings.json`. 3.0 removes the scripts. Run
+`node scripts/setup.js --host=claude` once to take their entries out of
+`settings.json` (or delete every hook command naming
+`agent-knowledge/scripts/hooks/`), then install the plugin. Remove a
+hand-written `agent-knowledge` entry from `~/.claude.json` too, so the tools do
+not appear twice.
+
+## Other hosts
+
+OpenCode gets the first-prompt injection, the compaction nudge and a session
+summary from its own plugin (`agent-knowledge/opencode`, see
+[SETUP.md](SETUP.md#opencode-plugins)). Any host can call the REST routes above.
+
+## Tests
+
+`plugin/tests/knowledge.test.ts` (`claude plugin test plugin`) covers each
+part of the lifecycle against a scripted server: the context block's parts and
+switches, the injection's gates, budget and once-per-conversation rule, the
+compaction's snapshot and summary, the end. `tests/rest-lifecycle.test.ts`
+covers the routes against real files and transcripts, and
+`tests/e2e-claude/` runs them in the real Claude Code CLI.

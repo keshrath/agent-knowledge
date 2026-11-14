@@ -2,6 +2,47 @@ import { describe, expect, it } from 'vitest';
 import { rerankMMR, diversityAtK, cosineSim, jaccardTokenSim } from '../src/search/mmr.js';
 
 describe('rerankMMR', () => {
+  it('diversifies on raw BM25-scale scores: a near-copy gives way to something else', () => {
+    // Three near-copies score highest; a different, slightly less relevant one exists.
+    const items = [
+      { id: 'a', score: 20, text: 'deploy the zebrafish service with make ship' },
+      { id: 'a2', score: 19.5, text: 'deploy the zebrafish service with make ship now' },
+      { id: 'a3', score: 19, text: 'deploy the zebrafish service with make ship today' },
+      { id: 'b', score: 15, text: 'zebrafish on-call: page the secondary after 15 minutes' },
+    ];
+    const out = rerankMMR(items, {
+      k: 2,
+      lambda: 0.7,
+      relevance: (x) => x.score,
+      sim: (x, y) => jaccardTokenSim(x.text, y.text),
+    });
+    expect(out.map((x) => x.id)).toEqual(['a', 'b']);
+  });
+
+  it('drops copies even when nothing else is as relevant (the copies tie, the rest is weak)', () => {
+    // The real case: eight gotchas that differ by their number only, all scored 6.58, and
+    // weaker hits beside them. MMR alone still filled k with copies; copies now go.
+    const copy = (n: number) => ({
+      id: `g${n}`,
+      score: 6.58,
+      text: `Gotcha ${n}: npm ci fails on lockfile drift. The fix is to retry once and then read the error message carefully.`,
+    });
+    const items = [
+      copy(2),
+      copy(6),
+      copy(10),
+      copy(14),
+      { id: 'w', score: 1.5, text: 'CI caches node_modules between runs' },
+    ];
+    const out = rerankMMR(items, {
+      k: 4,
+      lambda: 0.7,
+      relevance: (x) => x.score,
+      sim: (x, y) => jaccardTokenSim(x.text, y.text),
+    });
+    expect(out.map((x) => x.id)).toEqual(['g2', 'w']);
+  });
+
   it('is identity (input order by relevance) when lambda=1', () => {
     const items = [
       { id: 'a', score: 1.0 },
@@ -36,7 +77,18 @@ describe('rerankMMR', () => {
       relevance: (x) => x.score,
       k: 3,
     });
-    expect(out.map((x) => x.id)).toEqual(['a', 'c', 'b']);
+    // c before b; and b, at 0.9 a copy of a, is left out altogether.
+    expect(out.map((x) => x.id)).toEqual(['a', 'c']);
+    // With copies kept (a higher threshold), b comes last.
+    expect(
+      rerankMMR(items, {
+        lambda: 0.2,
+        sim: (x, y) => simMatrix[x.id][y.id],
+        relevance: (x) => x.score,
+        k: 3,
+        duplicate: 0.95,
+      }).map((x) => x.id),
+    ).toEqual(['a', 'c', 'b']);
   });
 
   it('truncates to k AND keeps the top-relevance item first', () => {
@@ -90,7 +142,8 @@ describe('rerankMMR', () => {
       relevance: (x) => x.score,
       k: 3,
     });
-    expect(out.map((x) => x.id)).toEqual(['a', 'c', 'b']);
+    // b, at 0.95 a copy of a, is left out.
+    expect(out.map((x) => x.id)).toEqual(['a', 'c']);
   });
 
   it('does not mutate the input array', () => {

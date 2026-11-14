@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { scopedSearch } from '../src/sessions/scopes.js';
 import * as parser from '../src/sessions/parser.js';
+import { resetProvider } from '../src/embeddings/factory.js';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-scopes-test-'));
@@ -22,6 +23,12 @@ describe('scopedSearch', () => {
   let tmpDir: string;
 
   beforeEach(() => {
+    // No embeddings, said outright: a provider with no key. The default (local) would load a
+    // model, and fetch it when not cached: seconds, and the network, in a unit test.
+    vi.stubEnv('AGENT_KNOWLEDGE_EMBEDDING_PROVIDER', 'openai');
+    vi.stubEnv('AGENT_KNOWLEDGE_OPENAI_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+    resetProvider();
     tmpDir = makeTmpDir();
     const projectDir = path.join(tmpDir, 'test-project');
     fs.mkdirSync(projectDir, { recursive: true });
@@ -109,6 +116,8 @@ describe('scopedSearch', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    resetProvider();
     cleanup(tmpDir);
   });
 
