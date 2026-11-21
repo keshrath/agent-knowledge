@@ -152,12 +152,16 @@ plugin`); **REST** = `tests/rest-pane.test.ts` / `tests/rest.test.ts` (vitest). 
 
 ## Layouts
 
-| What                                                                  | E2E                                                                          |
-| --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Docked, fullscreen 160 columns                                        | docked beside the conversation (every view)                                  |
-| Docked narrow, fullscreen 110 columns (about 40 columns of pane)      | docked narrow > the tab bar …; an entry, a search and Health fit the sidebar |
-| Inline above the prompt, 120 columns                                  | inline above the prompt > opens Browse … Enter opens a row and back returns  |
-| Surfaces terminal, desktop, vscode, mobile (no text fields on mobile) | unit: /knowledge opens a plain sidebar on Browse … on every surface          |
+| What                                                                                             | E2E                                                                          |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Docked, fullscreen 160 columns                                                                   | docked beside the conversation (every view)                                  |
+| Docked narrow, fullscreen 110 columns (about 40 columns of pane)                                 | docked narrow > the tab bar …; an entry, a search and Health fit the sidebar |
+| Inline above the prompt, 120 columns                                                             | inline above the prompt > opens Browse … Enter opens a row and back returns  |
+| Surfaces terminal, desktop, vscode, mobile (no text fields on mobile)                            | unit: /knowledge opens a plain sidebar on Browse … on every surface          |
+| Inline at 120 columns: one-line rows, the facts at the right                                     | inline above the prompt > opens Browse … (shot `pane-inline`)                |
+| Desktop dock: head, tiles, side column, Svg charts and link graph                                | — (no desktop app here); unit: `desktop: …` flows (7, `FLOW`)                |
+| Desktop widget glance; offline glance                                                            | unit: `<surface>: the widget is a glance …`, `… REST server down …`          |
+| Every flow on terminal and desktop: browse, entry, search, sessions, Health, widget, empty, down | unit: the `FLOW` loop in plugin/tests/knowledge.test.ts                      |
 
 ## UX review round 1
 

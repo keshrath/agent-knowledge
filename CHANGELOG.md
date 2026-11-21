@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.1.0 (2026-11-21) — the /knowledge pane in the desktop app
+
+### Added
+
+- **A desktop layout for /knowledge**: in the Claude desktop app the pane is drawn natively, the way the old web dashboard read: a head with the server's state, git sync, Refresh and **Sync now** as its main action, and tiles for entries, sessions, snapshots and vectors; a side column with the tabs and the categories, each with its count; the view beside it. An entry's page draws its body as one Markdown and its links as a graph of the entry and its neighbours (arrows by direction, coloured by category) above the list of links; Health adds charts of entries per category and of entries updated per week over the last 12 weeks. Below 90 columns the side column stacks above the view.
+- **A widget glance**: minimized to a widget in the desktop app, the pane shows the counts, the categories as one stacked bar, git and the latest activity, and a Search button.
+
+### Changed
+
+- **The terminal pane is calmer**: a rule under the tabs and the key line separates the controls from the view, and from 80 columns (a wide terminal, the desktop) a list row is one line: the title, its facts at the right. Charts are left out on the terminal, which draws no Svg.
+
 ## 3.0.0 (2026-11-13) — the session lifecycle moves into the plugin
 
 ### Breaking

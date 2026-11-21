@@ -24,6 +24,7 @@ import type {
 import {
   PAGE,
   Pane,
+  layoutOf,
   baseName,
   SNAPSHOTS,
   CATEGORIES,
@@ -1679,7 +1680,8 @@ export const register: Register = (on) => {
     drawnVersion = Math.max(drawnVersion, seen);
     return (
       <Pane
-        el={el}
+        // The terminal draws no Svg: the charts are left out there, the rest drawn the same.
+        el={e.surface === 'terminal' ? { ...el, Svg: undefined } : el}
         overview={o}
         route={r}
         category={c}
@@ -1704,6 +1706,7 @@ export const register: Register = (on) => {
         focused={fo}
         isFocused={e.props.isFocused}
         columns={e.props.bodyColumns}
+        layout={layoutOf(e.surface, e.props.placement)}
         landing={ld}
         draft={dr}
         on={actions($)}

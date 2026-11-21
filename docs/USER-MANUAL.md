@@ -298,6 +298,12 @@ Docked in the fullscreen layout the pane takes the right side of the window; on 
 
 ![Above the prompt](images/manual/inline.png)
 
+From 80 columns a row is one line: the title, its facts at the right.
+
+### In the desktop app
+
+In the Claude desktop app the pane is drawn natively, laid out as the old web dashboard was: a head with the server's state, git sync, **Refresh** and **Sync now**, tiles for entries, sessions, snapshots and vectors; a side column with the tabs and the categories, each with its count; the view beside it. An entry's page shows its links as a graph of its neighbours above the list, and its body whole; Health adds charts of the entries per category and of those updated per week. A narrow dock (under 90 columns) stacks the side column above the view. Minimized to a widget, the pane is a glance: the counts, the categories as one bar, git and the latest activity, and a **Search** button.
+
 ### When the server is away
 
 One agent-knowledge MCP process serves the REST API on `127.0.0.1:3423`; when its session ends another one takes the port over within a few seconds. While nothing answers, the pane says so and **Refresh** tries again (`✗ still nothing answers at http://127.0.0.1:3423 (12:04:31)`); the tabs stay, so `1`–`4` never land in the prompt, and it comes back by itself on the next poll.

@@ -405,6 +405,7 @@ function mount<S extends Surface = 'terminal'>(
   $: Engine,
   surface: S = 'terminal' as S,
   columns = 58,
+  placement: 'dock' | 'widget' = 'dock',
 ) {
   return $.ui.mount({
     plugin: 'agent-knowledge',
@@ -414,7 +415,7 @@ function mount<S extends Surface = 'terminal'>(
       title: 'agent-knowledge',
       isFocused: true,
       bodyColumns: columns,
-      placement: 'dock',
+      placement,
       scroll: { bodyRows: 30 },
       view: {},
     } as never,
@@ -422,7 +423,7 @@ function mount<S extends Surface = 'terminal'>(
   });
 }
 
-type Mounted = Awaited<ReturnType<typeof mount<'terminal'>>>;
+type Mounted = Pick<Awaited<ReturnType<typeof mount<'terminal'>>>, 'find'>;
 
 /** The one text field drawn (Find on Browse, the Search field): its key carries `rev`. */
 async function fieldKey(ui: Mounted): Promise<string> {
@@ -2202,3 +2203,158 @@ test('a press whose button was drawn again is made by its key when it only moves
     expect(moveOf(k)).toBeNull();
   expect(moveOf('clear-filter')).toBeNull();
 });
+
+// Every flow on the terminal (a docked sidebar) and in the desktop app (its wide dock, with
+// the side column, the stat tiles and the charts), as the person walks it.
+const FLOW = [
+  ['terminal', 58],
+  ['desktop', 120],
+] as const;
+
+const LINKED = () => [
+  {
+    source: 'projects/agent-tasks.md',
+    target: 'decisions/rest-only.md',
+    rel_type: 'depends_on',
+    origin: 'manual',
+  },
+  {
+    source: 'workflows/release.md',
+    target: 'projects/agent-tasks.md',
+    rel_type: 'related_to',
+    origin: 'auto-link',
+  },
+];
+
+for (const [surface, columns] of FLOW) {
+  const isDesk = surface === 'desktop';
+
+  test(`${surface}: open, browse a category, read an entry with its links`, async ($, on) => {
+    const sv = server(on, { entries: ENTRIES(), sessions: SESSIONS(), edges: LINKED() });
+    await start($);
+    const ui = await mount($, surface, columns);
+    expect(await ui.find({ key: 'open:all:projects/agent-tasks.md' })).toMatchObject({
+      props: { autoFocus: true },
+    });
+    // The desktop: a head with the state and tiles for the counts, no key line; the terminal
+    // the key line and a rule under it.
+    if (isDesk) {
+      expect(await ui.find({ type: 'Text', text: 'entries' })).toBeDefined();
+      expect(await ui.find({ type: 'Text', text: '● online' })).toBeDefined();
+      expect(await ui.find({ type: 'Text', text: 'snapshots' })).toBeUndefined(); // none yet
+      expect(await ui.find({ type: 'Text', text: /Tab moves/ })).toBeUndefined();
+    } else {
+      expect(await ui.find({ type: 'Text', text: /Tab moves · Enter presses/ })).toBeDefined();
+      expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeDefined();
+    }
+    await ui.press({ key: 'cat:decisions' });
+    expect(await ui.find({ key: 'open:decisions:decisions/rest-only.md' })).toMatchObject({
+      props: { autoFocus: true },
+    });
+    expect(await ui.find({ key: 'open:all:projects/agent-tasks.md' })).toBeUndefined();
+    await ui.press({ key: 'cat:all' });
+    await ui.press({ key: 'open:all:projects/agent-tasks.md' });
+    expect(await ui.find({ key: 'back' })).toMatchObject({ props: { label: '‹ Browse' } });
+    expect(await ui.find({ type: 'Markdown' })).toMatchObject({ props: { text: 'Some text.' } });
+    const svgs = (await ui.findAll({ type: 'Svg' })) as unknown as { props: { alt: string } }[];
+    const graph = svgs.find((x) => /agent-tasks 2.0 and the 2 entries/.test(x.props.alt));
+    if (isDesk) expect(graph).toBeDefined();
+    else expect(graph).toBeUndefined();
+    await ui.press({ key: 'link:projects/agent-tasks.md:out:decisions/rest-only.md' });
+    expect(await ui.find({ type: 'Text', text: /^REST only, no WebSocket$/ })).toBeDefined();
+    await sv.clock.advance(500);
+    await ui.press({ key: 'back' });
+    expect(await ui.find({ type: 'Text', text: /^agent-tasks 2\.0$/ })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test(`${surface}: search finds entries and sessions with excerpts; a hit opens`, async ($, on) => {
+    server(on, { entries: ENTRIES(), sessions: SESSIONS() });
+    await start($);
+    const ui = await mount($, surface, columns);
+    await ui.press({ key: 'tab:search' });
+    const hint = await ui.find({ type: 'Text', text: /Press 2 again/ });
+    if (isDesk) expect(hint).toBeUndefined();
+    else expect(hint).toBeDefined();
+    await ui.input({ key: await fieldKey(ui), text: 'pane' });
+    expect(await ui.find({ type: 'Text', text: /^Entries$/ })).toBeDefined();
+    expect(await ui.find({ type: 'Text', text: /^In past sessions$/ })).toBeDefined();
+    expect(await ui.find({ type: 'Text', text: /…agent-tasks 2\.0 excerpt…/ })).toBeDefined();
+    const rev = await revOf(ui);
+    await ui.press({ key: `hit:${rev}:e:projects/agent-tasks.md` });
+    expect(await ui.find({ key: 'back' })).toMatchObject({ props: { label: '‹ Search' } });
+    await ui.unmount();
+  });
+
+  test(`${surface}: sessions list and a session's summary`, async ($, on) => {
+    server(on, { entries: ENTRIES(), sessions: SESSIONS() });
+    await start($);
+    const ui = await mount($, surface, columns);
+    await ui.press({ key: 'tab:sessions' });
+    expect(await ui.find({ type: 'Text', text: /make the board a pane/ })).toBeDefined();
+    await ui.press({ key: 'sess:s-1' });
+    expect(await ui.find({ key: 'back' })).toMatchObject({ props: { label: '‹ Sessions' } });
+    expect(await ui.find({ type: 'Text', text: 'test it in the real CLI' })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test(`${surface}: Health shows the counts, activity and Analyze`, async ($, on) => {
+    server(on, { entries: ENTRIES(), sessions: SESSIONS(), hasGit: true });
+    await start($);
+    const ui = await mount($, surface, columns);
+    await ui.press({ key: 'tab:health' });
+    expect(await ui.find({ type: 'Text', text: 'Entries' })).toBeDefined();
+    const svgs = (await ui.findAll({ type: 'Svg' })) as unknown as { props: { alt: string } }[];
+    const activity = svgs.find((x) => /Entries updated per week/.test(x.props.alt));
+    if (isDesk) {
+      expect(activity).toBeDefined();
+      expect(svgs.find((x) => /^Entries per category: projects 1/.test(x.props.alt))).toBeDefined();
+      // Sync is the head's main action there, once.
+      expect(await ui.find({ key: 'sync' })).toMatchObject({ props: { variant: 'primary' } });
+    } else {
+      expect(activity).toBeUndefined();
+      expect(await ui.find({ key: 'sync' })).toBeDefined();
+    }
+    await ui.press({ key: 'analyze:first' });
+    expect(await ui.find({ type: 'Text', text: /^Most linked$/ })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test(`${surface}: the widget is a glance with the way into Search`, async ($, on) => {
+    server(on, { entries: ENTRIES(), sessions: SESSIONS() });
+    await start($);
+    const ui = await mount($, surface, 40, 'widget');
+    expect(await ui.find({ type: 'Text', text: 'agent-knowledge' })).toBeDefined();
+    expect(await ui.find({ type: 'Text', text: /entries/ })).toBeDefined();
+    expect(await ui.find({ key: 'tab:browse' })).toBeUndefined();
+    if (isDesk) expect(await ui.find({ type: 'Svg' })).toBeDefined();
+    else expect(await ui.find({ type: 'Text', text: /projects 1/ })).toBeDefined();
+    await ui.press({ key: 'glance:search' });
+    await ui.unmount();
+    const pane = await mount($, surface, columns);
+    expect(await pane.find({ type: 'Input' })).toMatchObject({ props: { label: 'Search' } });
+    await pane.unmount();
+  });
+
+  test(`${surface}: an empty knowledge base says what goes there`, async ($, on) => {
+    server(on, { entries: [], sessions: [] });
+    await start($);
+    const ui = await mount($, surface, columns);
+    expect(await ui.find({ type: 'Text', text: 'The knowledge base is empty.' })).toBeDefined();
+    if (isDesk) expect(await ui.find({ type: 'Svg' })).toBeUndefined();
+    await ui.unmount();
+  });
+
+  test(`${surface}: the REST server down says what to do, in the pane and the widget`, async ($, on) => {
+    server(on, { entries: ENTRIES(), isDown: true });
+    await start($);
+    const ui = await mount($, surface, columns);
+    expect(await ui.find({ type: 'Text', text: /not reachable/ })).toBeDefined();
+    expect(await ui.find({ key: 'retry' })).toBeDefined();
+    if (isDesk) expect(await ui.find({ type: 'Text', text: '● offline' })).toBeDefined();
+    await ui.unmount();
+    const glance = await mount($, surface, 40, 'widget');
+    expect(await glance.find({ type: 'Text', text: '● offline' })).toBeDefined();
+    await glance.unmount();
+  });
+}

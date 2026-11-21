@@ -1,7 +1,7 @@
 {
   "name": "agent-knowledge",
   "displayName": "agent-knowledge",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Cross-session memory for AI coding agents: a git-synced Markdown knowledge base with hybrid search, a typed knowledge graph and session distillation, browsed in the /knowledge pane; each conversation starts knowing what it holds.",
   "author": {
     "name": "keshrath"
