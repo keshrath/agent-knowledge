@@ -28,7 +28,11 @@ async function loadPipeline(model: string): Promise<PipelineFn | null> {
     console.error(
       `[knowledge] Loading embedding model ${model} (quantized, ${_numThreads} thread(s))...`,
     );
-    const { pipeline } = await import('@huggingface/transformers');
+    // Optional dependency: npm drops it when its install fails, so the build must not need its types.
+    const optional = '@huggingface/transformers';
+    const { pipeline } = (await import(optional)) as {
+      pipeline: (task: string, model: string, options: Record<string, unknown>) => Promise<unknown>;
+    };
 
     const pipe = await pipeline('feature-extraction', model, {
       dtype: 'q8',
